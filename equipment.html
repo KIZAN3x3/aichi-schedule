@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>備品管理 - 愛知活動スケジュール帳</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<section id="login-screen" class="login-screen">
+  <div class="login-card">
+    <h1 class="app-title">愛知活動スケジュール帳</h1>
+    <form id="login-form" class="login-form">
+      <label for="password-input">パスワード</label>
+      <input type="password" id="password-input" inputmode="numeric" autocomplete="off" required />
+      <button type="submit" class="btn btn-primary">入る</button>
+      <p id="login-error" class="form-error"></p>
+    </form>
+  </div>
+</section>
+
+<div id="app" class="app hidden">
+  <header class="app-header">
+    <h1 class="app-title">愛知活動スケジュール帳</h1>
+    <div class="status-bar">
+      <span id="role-dot" class="status-dot"></span>
+      <span id="role-text" class="status-role"></span>
+      <span class="status-sep">・</span>
+      <button type="button" id="name-display-btn" class="status-name-btn">
+        <span id="name-display-value">お名前未設定</span>
+        <span aria-hidden="true">✎</span>
+      </button>
+      <span id="name-edit-wrap" class="status-name-edit hidden">
+        <input type="text" id="name-input" placeholder="お名前" maxlength="20" />
+      </span>
+      <button type="button" id="logout-btn" class="status-logout-btn" title="ログアウト" aria-label="ログアウト">⎋</button>
+    </div>
+  </header>
+
+  <nav class="page-nav">
+    <a href="index.html" class="page-nav-link">スケジュール</a>
+    <a href="equipment.html" class="page-nav-link is-active">備品管理</a>
+  </nav>
+
+  <main class="app-main">
+    <section class="panel">
+      <div class="schedule-panel-header">
+        <h2 class="selected-date-label">備品一覧</h2>
+        <button type="button" id="new-item-toggle-btn" class="btn btn-primary btn-small">＋ 備品を登録</button>
+      </div>
+
+      <form id="item-form" class="event-form hidden">
+        <label>
+          品目名
+          <input type="text" id="item-name" placeholder="品目名" required />
+        </label>
+        <label>
+          保管場所
+          <input type="text" id="item-location" placeholder="保管場所" required />
+        </label>
+        <label>
+          画像（任意）
+          <input type="file" id="item-image" accept="image/png,image/jpeg,image/webp,image/gif" />
+        </label>
+        <img id="item-image-preview" class="image-preview" alt="画像プレビュー" />
+        <label>
+          メモ（任意）
+          <textarea id="item-memo" placeholder="メモ"></textarea>
+        </label>
+        <label>
+          更新者名
+          <input type="text" id="item-updated-by" placeholder="お名前" required />
+        </label>
+        <p id="item-form-error" class="form-error"></p>
+        <button type="submit" class="btn btn-primary" id="item-form-submit">登録する</button>
+      </form>
+
+      <div id="equipment-list" class="equipment-grid"></div>
+    </section>
+  </main>
+</div>
+
+<script type="module" src="js/equipment.js"></script>
+</body>
+</html>

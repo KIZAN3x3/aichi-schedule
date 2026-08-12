@@ -20,4 +20,8 @@ export const api = {
   updateEvent: (id, payload) => request(`/api/events/${id}`, 'PUT', payload),
   deleteEvent: (id, payload) => request(`/api/events/${id}`, 'DELETE', payload),
   joinEvent: (payload) => request('/api/participants', 'POST', payload),
+  createEquipment: (payload) => request('/api/equipment', 'POST', payload),
+  updateEquipment: (id, payload) => request(`/api/equipment/${id}`, 'PUT', payload),
+  deleteEquipment: (id, payload) => request(`/api/equipment/${id}`, 'DELETE', payload),
+  getEquipmentUploadUrl: (payload) => request('/api/equipment/upload-url', 'POST', payload),
 };

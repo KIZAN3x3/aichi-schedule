@@ -2,7 +2,7 @@ const { getSupabaseClient } = require('./_lib/supabase');
 const { resolveRole } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 
-// POST /api/equipment : 備品の新規登録（一般・管理者とも同一権限）
+// POST /api/equipment : 備品の新規登録（マスター管理者のみ）
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return methodNotAllowed(res, ['POST']);
@@ -12,6 +12,9 @@ module.exports = async (req, res) => {
   const role = resolveRole(password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
+  }
+  if (role !== 'admin') {
+    return sendJson(res, 403, { error: '新規登録はマスター管理者のみ可能です' });
   }
   if (!item_name || !location || !updated_by) {
     return sendJson(res, 400, { error: '必須項目が不足しています' });
@@ -33,5 +36,17 @@ module.exports = async (req, res) => {
   if (error) {
     return sendJson(res, 500, { error: error.message });
   }
+
+  // 初回登録も移動履歴の1件目として記録する
+  const { error: historyError } = await supabase.from('equipment_history').insert({
+    equipment_id: data.id,
+    location: data.location,
+    moved_by: data.updated_by,
+    moved_at: data.updated_at,
+  });
+  if (historyError) {
+    console.error('equipment_history insert failed:', historyError.message);
+  }
+
   return sendJson(res, 201, data);
 };

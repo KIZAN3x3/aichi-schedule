@@ -85,6 +85,21 @@ comment on column public.equipment.image_url is 'Supabase Storageに保存した
 
 create index if not exists idx_equipment_item_name on public.equipment (item_name);
 
+-- ------------------------------------------------------------
+-- equipment_history: 備品の保管場所移動履歴（初回登録時の記録を含む）
+-- ------------------------------------------------------------
+create table if not exists public.equipment_history (
+  id            uuid primary key default gen_random_uuid(),
+  equipment_id  uuid not null references public.equipment (id) on delete cascade,
+  location      text not null,
+  moved_by      text not null,
+  moved_at      timestamptz not null default now()
+);
+
+comment on table public.equipment_history is '備品の保管場所移動履歴（登録時の初回記録を含む、新しい順で表示）';
+
+create index if not exists idx_equipment_history_equipment_id on public.equipment_history (equipment_id, moved_at desc);
+
 -- ============================================================
 -- Row Level Security
 -- 読み取り(SELECT)はanonにも許可（Realtimeでの自動反映に必要）。
@@ -92,13 +107,15 @@ create index if not exists idx_equipment_item_name on public.equipment (item_nam
 -- （service roleはRLSをバイパスするため専用ポリシーは不要）。
 -- ============================================================
 
-alter table public.events        enable row level security;
-alter table public.participants  enable row level security;
-alter table public.equipment     enable row level security;
+alter table public.events            enable row level security;
+alter table public.participants      enable row level security;
+alter table public.equipment         enable row level security;
+alter table public.equipment_history enable row level security;
 
-create policy "events_select_anon"       on public.events       for select using (true);
-create policy "participants_select_anon" on public.participants for select using (true);
-create policy "equipment_select_anon"    on public.equipment    for select using (true);
+create policy "events_select_anon"            on public.events            for select using (true);
+create policy "participants_select_anon"      on public.participants      for select using (true);
+create policy "equipment_select_anon"         on public.equipment         for select using (true);
+create policy "equipment_history_select_anon" on public.equipment_history for select using (true);
 
 -- ============================================================
 -- Realtime: 他端末への自動反映用にpublicationへ追加
@@ -106,3 +123,4 @@ create policy "equipment_select_anon"    on public.equipment    for select using
 alter publication supabase_realtime add table public.events;
 alter publication supabase_realtime add table public.participants;
 alter publication supabase_realtime add table public.equipment;
+alter publication supabase_realtime add table public.equipment_history;
