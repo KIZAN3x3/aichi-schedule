@@ -1,0 +1,524 @@
+:root {
+  --orange-light: #f5871f;
+  --orange-mid: #f06e15;
+  --orange-dark: #e0590a;
+  --bg: #fdf6ee;
+  --card-bg: #ffffff;
+  --text: #2b2119;
+  --text-muted: #8a7a6d;
+  --border: #ecdcc8;
+  --danger: #d1453b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Hiragino Sans", "Yu Gothic", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.btn {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 15px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--orange-light), var(--orange-dark));
+  color: #fff;
+}
+
+.btn-outline {
+  background: #fff;
+  color: var(--orange-dark);
+  border: 1px solid var(--orange-mid);
+}
+
+.btn-danger {
+  background: #fff;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-error {
+  color: var(--danger);
+  font-size: 13px;
+  min-height: 1.2em;
+  margin: 4px 0;
+}
+
+.hint-text {
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 12px 0;
+}
+
+/* ログイン画面 */
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, var(--orange-light), var(--orange-dark));
+  padding: 16px;
+}
+
+.login-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 360px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+  text-align: center;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.login-form input {
+  padding: 12px;
+  font-size: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  text-align: center;
+}
+
+/* アプリ本体 */
+.app-header {
+  background: linear-gradient(135deg, var(--orange-light), var(--orange-dark));
+  color: #fff;
+  padding: 16px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 20px;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.badge {
+  background: rgba(255, 255, 255, 0.25);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.badge-admin {
+  background: #fff;
+  color: var(--orange-dark);
+  font-weight: 700;
+}
+
+.name-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.name-field input {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: none;
+  font-size: 14px;
+}
+
+.app-main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.branch-panel label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.branch-panel select {
+  width: 100%;
+  padding: 10px;
+  font-size: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+/* カレンダー */
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.calendar-month-label {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.weekday-cell {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.day-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: 1px solid transparent;
+  background: #fff8f0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.day-cell-empty {
+  background: transparent;
+  cursor: default;
+}
+
+.day-cell.is-today {
+  border-color: var(--orange-mid);
+}
+
+.day-cell.is-selected {
+  background: linear-gradient(135deg, var(--orange-light), var(--orange-dark));
+  color: #fff;
+}
+
+.day-dot {
+  position: absolute;
+  bottom: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--orange-dark);
+}
+
+.day-cell.is-selected .day-dot {
+  background: #fff;
+}
+
+/* 予定パネル */
+.schedule-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.selected-date-label {
+  margin: 0;
+  font-size: 16px;
+}
+
+.event-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed var(--orange-mid);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+
+.event-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.event-form-row {
+  display: flex;
+  gap: 10px;
+}
+
+.event-form-row label {
+  flex: 1;
+}
+
+.event-form input,
+.event-form select,
+.event-form textarea {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 15px;
+  font-family: inherit;
+}
+
+.event-form textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.view-toggle-btn {
+  flex: 1;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-toggle-btn.is-active {
+  background: linear-gradient(135deg, var(--orange-light), var(--orange-dark));
+  border-color: transparent;
+  color: #fff;
+}
+
+.event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.event-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.event-card-editing {
+  gap: 8px;
+}
+
+.event-card-editing input,
+.event-card-editing select,
+.event-card-editing textarea {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.event-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.event-time {
+  font-weight: 700;
+  color: var(--orange-dark);
+  font-size: 16px;
+}
+
+.event-place {
+  font-weight: 600;
+}
+
+.category-badge {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: auto;
+}
+
+.event-content {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.event-poster {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.participants-section {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.participants-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
+.participant-chip {
+  background: #fdeee0;
+  color: var(--orange-dark);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.event-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* タイムライン表示 */
+.timeline-scroll {
+  max-height: 480px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.timeline-inner {
+  position: relative;
+  display: flex;
+}
+
+.timeline-labels {
+  position: relative;
+  flex: 0 0 52px;
+  border-right: 1px solid var(--border);
+  background: #fff8f0;
+}
+
+.timeline-hour-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  transform: translateY(-6px);
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.timeline-track {
+  position: relative;
+  flex: 1;
+}
+
+.timeline-hour-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+
+.timeline-block {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 6px;
+  padding: 3px 6px;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  cursor: default;
+}
+
+.timeline-block-compact {
+  padding: 2px 6px;
+  display: flex;
+  align-items: center;
+}
+
+.timeline-block-line {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.timeline-block-time {
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.9;
+  line-height: 1.2;
+}
+
+.timeline-block-place {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-block-content {
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

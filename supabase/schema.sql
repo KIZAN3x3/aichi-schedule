@@ -1,0 +1,108 @@
+-- ============================================================
+-- 愛知活動スケジュール帳 - Supabase テーブル定義
+-- 対象: events / participants / equipment
+--
+-- 実行方法: SupabaseダッシュボードのSQL Editorに貼り付けて実行
+--
+-- 権限モデルについて:
+--   このアプリはSupabase Authを使わず、パスワード1つで
+--   一般ユーザー/マスター管理者を判定する簡易認証（123 / 123123）。
+--   そのため「自分の投稿だけ編集可」等の権限チェックは
+--   Vercel Serverless Functions（api/*.js）側でservice role keyを使って
+--   サーバーサイドで行う想定。
+--   ブラウザから直接Supabaseを叩くのはRealtime購読の読み取り(SELECT)のみとし、
+--   書き込み(INSERT/UPDATE/DELETE)はanonロールには許可しない。
+-- ============================================================
+
+create extension if not exists pgcrypto;
+
+-- ------------------------------------------------------------
+-- 支部マスタ（16支部固定）
+-- CHECK制約とプルダウン用の値を一箇所にまとめるためdomain代わりに配列で管理
+-- ------------------------------------------------------------
+-- 許可する支部名: '1支部' 〜 '16支部'
+
+-- ------------------------------------------------------------
+-- events: 支部ごとの活動予定
+-- ------------------------------------------------------------
+create table if not exists public.events (
+  id           uuid primary key default gen_random_uuid(),
+  branch       text not null check (
+                 branch in (
+                   '1支部','2支部','3支部','4支部','5支部','6支部','7支部','8支部',
+                   '9支部','10支部','11支部','12支部','13支部','14支部','15支部','16支部'
+                 )
+               ),
+  date         date not null,
+  time         time not null,
+  end_time     time,
+  place        text not null,
+  content      text not null,
+  poster_name  text not null,
+  category     text,
+  created_at   timestamptz not null default now()
+);
+
+comment on table public.events is '支部ごとの活動スケジュール';
+comment on column public.events.branch is '支部名（1支部〜16支部の固定16件）';
+comment on column public.events.end_time is '終了時間（任意）。未入力ならタイムライン表示は固定の短いブロックとして描画';
+comment on column public.events.poster_name is '投稿者名（自己申告・Supabase Authは使わない）';
+comment on column public.events.category is 'カテゴリ（固定8種、または「その他」選択時の自由入力テキスト。未選択(null)も許容）';
+
+-- 支部×日付での一覧表示が主用途なので複合インデックスを用意
+create index if not exists idx_events_branch_date on public.events (branch, date);
+create index if not exists idx_events_date on public.events (date);
+
+-- ------------------------------------------------------------
+-- participants: 各予定への参加者
+-- ------------------------------------------------------------
+create table if not exists public.participants (
+  id                uuid primary key default gen_random_uuid(),
+  event_id          uuid not null references public.events (id) on delete cascade,
+  participant_name  text not null,
+  created_at        timestamptz not null default now()
+);
+
+comment on table public.participants is '予定ごとの参加者（自己申告名）';
+
+create index if not exists idx_participants_event_id on public.participants (event_id);
+
+-- ------------------------------------------------------------
+-- equipment: 全体共通の備品管理（支部の区別なし）
+-- ------------------------------------------------------------
+create table if not exists public.equipment (
+  id          uuid primary key default gen_random_uuid(),
+  item_name   text not null,
+  location    text not null,
+  image_url   text,
+  memo        text,
+  updated_by  text not null,
+  updated_at  timestamptz not null default now()
+);
+
+comment on table public.equipment is '全体共通の備品リスト（支部を跨いで共有）';
+comment on column public.equipment.image_url is 'Supabase Storageに保存した画像のURL';
+
+create index if not exists idx_equipment_item_name on public.equipment (item_name);
+
+-- ============================================================
+-- Row Level Security
+-- 読み取り(SELECT)はanonにも許可（Realtimeでの自動反映に必要）。
+-- 書き込みはanonには許可せず、api/*.js からservice role keyで実行する
+-- （service roleはRLSをバイパスするため専用ポリシーは不要）。
+-- ============================================================
+
+alter table public.events        enable row level security;
+alter table public.participants  enable row level security;
+alter table public.equipment     enable row level security;
+
+create policy "events_select_anon"       on public.events       for select using (true);
+create policy "participants_select_anon" on public.participants for select using (true);
+create policy "equipment_select_anon"    on public.equipment    for select using (true);
+
+-- ============================================================
+-- Realtime: 他端末への自動反映用にpublicationへ追加
+-- ============================================================
+alter publication supabase_realtime add table public.events;
+alter publication supabase_realtime add table public.participants;
+alter publication supabase_realtime add table public.equipment;

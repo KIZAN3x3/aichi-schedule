@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>愛知活動スケジュール帳</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<section id="login-screen" class="login-screen">
+  <div class="login-card">
+    <h1 class="app-title">愛知活動スケジュール帳</h1>
+    <form id="login-form" class="login-form">
+      <label for="password-input">パスワード</label>
+      <input type="password" id="password-input" inputmode="numeric" autocomplete="off" required />
+      <button type="submit" class="btn btn-primary">入る</button>
+      <p id="login-error" class="form-error"></p>
+    </form>
+  </div>
+</section>
+
+<div id="app" class="app hidden">
+  <header class="app-header">
+    <h1 class="app-title">愛知活動スケジュール帳</h1>
+    <div class="header-controls">
+      <span id="role-badge" class="badge"></span>
+      <label class="name-field">
+        表示名
+        <input type="text" id="name-input" placeholder="お名前" maxlength="20" />
+      </label>
+      <button type="button" id="logout-btn" class="btn btn-outline btn-small">ログアウト</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="panel branch-panel">
+      <label for="branch-select">支部を選択</label>
+      <select id="branch-select">
+        <option value="">-- 支部を選択 --</option>
+      </select>
+    </section>
+
+    <section class="panel calendar-panel">
+      <div class="calendar-header">
+        <button type="button" id="prev-month-btn" class="btn btn-outline btn-small">＜</button>
+        <span id="calendar-month-label" class="calendar-month-label"></span>
+        <button type="button" id="next-month-btn" class="btn btn-outline btn-small">＞</button>
+      </div>
+      <div id="calendar-weekdays" class="calendar-weekdays"></div>
+      <div id="calendar-grid" class="calendar-grid"></div>
+    </section>
+
+    <section class="panel schedule-panel">
+      <div class="schedule-panel-header">
+        <h2 id="selected-date-label" class="selected-date-label"></h2>
+        <button type="button" id="new-event-toggle-btn" class="btn btn-primary btn-small">＋ この日に予定を追加</button>
+      </div>
+
+      <form id="event-form" class="event-form hidden">
+        <div class="event-form-row">
+          <label>
+            開始時間
+            <input type="time" id="event-time" required />
+          </label>
+          <label>
+            終了時間（任意）
+            <input type="time" id="event-end-time" />
+          </label>
+        </div>
+        <label>
+          場所
+          <input type="text" id="event-place" placeholder="場所" required />
+        </label>
+        <label>
+          活動内容
+          <textarea id="event-content" placeholder="活動内容" required></textarea>
+        </label>
+        <label>
+          カテゴリ
+          <select id="event-category-select">
+            <option value="">未選択</option>
+          </select>
+        </label>
+        <label id="event-category-other-wrap" class="hidden">
+          カテゴリ名（自由入力）
+          <input type="text" id="event-category-other" placeholder="カテゴリ名を入力" maxlength="50" />
+        </label>
+        <label>
+          投稿者名
+          <input type="text" id="event-poster-name" placeholder="お名前" required />
+        </label>
+        <p id="event-form-error" class="form-error"></p>
+        <button type="submit" class="btn btn-primary">投稿する</button>
+      </form>
+
+      <div class="view-toggle" role="tablist">
+        <button type="button" id="view-list-btn" class="view-toggle-btn is-active" role="tab" aria-selected="true">一覧</button>
+        <button type="button" id="view-timeline-btn" class="view-toggle-btn" role="tab" aria-selected="false">タイムライン</button>
+      </div>
+
+      <div id="event-list" class="event-list"></div>
+      <div id="timeline-view" class="timeline-view hidden"></div>
+    </section>
+  </main>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

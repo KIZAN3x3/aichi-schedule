@@ -1,0 +1,9 @@
+{
+  "name": "aichi-schedule",
+  "version": "1.0.0",
+  "private": true,
+  "description": "愛知活動スケジュール帳",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
