@@ -23,13 +23,18 @@
 <div id="app" class="app hidden">
   <header class="app-header">
     <h1 class="app-title">愛知活動スケジュール帳</h1>
-    <div class="header-controls">
-      <span id="role-badge" class="badge"></span>
-      <label class="name-field">
-        表示名
+    <div class="status-bar">
+      <span id="role-dot" class="status-dot"></span>
+      <span id="role-text" class="status-role"></span>
+      <span class="status-sep">・</span>
+      <button type="button" id="name-display-btn" class="status-name-btn">
+        <span id="name-display-value">お名前未設定</span>
+        <span aria-hidden="true">✎</span>
+      </button>
+      <span id="name-edit-wrap" class="status-name-edit hidden">
         <input type="text" id="name-input" placeholder="お名前" maxlength="20" />
-      </label>
-      <button type="button" id="logout-btn" class="btn btn-outline btn-small">ログアウト</button>
+      </span>
+      <button type="button" id="logout-btn" class="status-logout-btn" title="ログアウト" aria-label="ログアウト">⎋</button>
     </div>
   </header>
 

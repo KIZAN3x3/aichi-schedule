@@ -113,50 +113,99 @@ body {
 .app-header {
   background: linear-gradient(135deg, var(--orange-light), var(--orange-dark));
   color: #fff;
-  padding: 16px 20px;
+  padding: 14px 20px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .app-title {
   margin: 0;
-  font-size: 20px;
+  font-size: 19px;
 }
 
-.header-controls {
+.status-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.badge {
-  background: rgba(255, 255, 255, 0.25);
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 13px;
-}
-
-.badge-admin {
-  background: #fff;
-  color: var(--orange-dark);
-  font-weight: 700;
-}
-
-.name-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.name-field input {
+  gap: 8px;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
   padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.status-dot.admin {
+  background: #ffe3ae;
+  box-shadow: 0 0 0 2px rgba(255, 227, 174, 0.35);
+}
+
+.status-role {
+  white-space: nowrap;
+}
+
+.status-sep {
+  opacity: 0.5;
+}
+
+.status-name-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.status-name-btn span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-name-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+.status-name-edit input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 8px;
   border-radius: 6px;
   border: none;
-  font-size: 14px;
+  font-size: 12.5px;
+  font-family: inherit;
+}
+
+.status-logout-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 
 .app-main {

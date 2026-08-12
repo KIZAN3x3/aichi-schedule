@@ -41,8 +41,12 @@ const els = {
   passwordInput: document.getElementById('password-input'),
   loginError: document.getElementById('login-error'),
   app: document.getElementById('app'),
-  roleBadge: document.getElementById('role-badge'),
+  roleDot: document.getElementById('role-dot'),
+  roleText: document.getElementById('role-text'),
   logoutBtn: document.getElementById('logout-btn'),
+  nameDisplayBtn: document.getElementById('name-display-btn'),
+  nameDisplayValue: document.getElementById('name-display-value'),
+  nameEditWrap: document.getElementById('name-edit-wrap'),
   nameInput: document.getElementById('name-input'),
   branchSelect: document.getElementById('branch-select'),
   calendarMonthLabel: document.getElementById('calendar-month-label'),
@@ -122,10 +126,20 @@ function renderWeekdayHeader() {
 function bindStaticEvents() {
   els.loginForm.addEventListener('submit', handleLoginSubmit);
 
-  els.nameInput.addEventListener('change', () => {
-    state.myName = els.nameInput.value.trim();
-    localStorage.setItem('aichi-schedule:name', state.myName);
-    renderCurrentView();
+  els.nameDisplayBtn.addEventListener('click', () => {
+    els.nameInput.value = state.myName;
+    els.nameDisplayBtn.classList.add('hidden');
+    els.nameEditWrap.classList.remove('hidden');
+    els.nameInput.focus();
+    els.nameInput.select();
+  });
+
+  els.nameInput.addEventListener('blur', saveNameEdit);
+  els.nameInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      els.nameInput.blur();
+    }
   });
 
   els.branchSelect.addEventListener('change', async () => {
@@ -159,6 +173,19 @@ function bindStaticEvents() {
   els.viewTimelineBtn.addEventListener('click', () => setViewMode('timeline'));
 }
 
+function saveNameEdit() {
+  state.myName = els.nameInput.value.trim();
+  localStorage.setItem('aichi-schedule:name', state.myName);
+  updateNameDisplay();
+  els.nameEditWrap.classList.add('hidden');
+  els.nameDisplayBtn.classList.remove('hidden');
+  renderCurrentView();
+}
+
+function updateNameDisplay() {
+  els.nameDisplayValue.textContent = state.myName || 'お名前未設定';
+}
+
 function setViewMode(mode) {
   if (state.viewMode === mode) return;
   state.viewMode = mode;
@@ -172,7 +199,7 @@ function setViewMode(mode) {
 function restoreSession() {
   const savedName = localStorage.getItem('aichi-schedule:name') || '';
   state.myName = savedName;
-  els.nameInput.value = savedName;
+  updateNameDisplay();
 
   const savedBranch = localStorage.getItem('aichi-schedule:branch') || '';
 
@@ -223,8 +250,8 @@ function handleLogout() {
 function enterApp() {
   els.loginScreen.classList.add('hidden');
   els.app.classList.remove('hidden');
-  els.roleBadge.textContent = ROLE_LABELS[state.role];
-  els.roleBadge.classList.toggle('badge-admin', state.role === 'admin');
+  els.roleText.textContent = ROLE_LABELS[state.role];
+  els.roleDot.classList.toggle('admin', state.role === 'admin');
   boot();
 }
 
