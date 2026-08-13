@@ -296,10 +296,13 @@ body {
   background: #fff8f0;
   border-radius: 8px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   cursor: pointer;
   font-size: 14px;
+  padding: 2px 0;
 }
 
 .day-cell-empty {
@@ -327,6 +330,36 @@ body {
 
 .day-cell.is-selected .day-dot {
   background: #fff;
+}
+
+.day-cat-icons {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
+.day-cat-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.day-cat-icon-more {
+  background: var(--text-muted);
+  font-size: 7px;
+}
+
+.day-cell.is-selected .day-cat-icon-more {
+  background: rgba(255, 255, 255, 0.35);
 }
 
 /* 予定パネル */
@@ -543,6 +576,25 @@ body {
   left: 0;
   right: 0;
   border-top: 1px solid var(--border);
+}
+
+.timeline-minute-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  transform: translateY(-5px);
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.timeline-minute-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--border);
+  opacity: 0.6;
 }
 
 .timeline-block {

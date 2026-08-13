@@ -47,7 +47,7 @@ comment on table public.events is '支部ごとの活動スケジュール';
 comment on column public.events.branch is '支部名（1支部〜16支部の固定16件）';
 comment on column public.events.end_time is '終了時間（任意）。未入力ならタイムライン表示は固定の短いブロックとして描画';
 comment on column public.events.poster_name is '投稿者名（自己申告・Supabase Authは使わない）';
-comment on column public.events.category is 'カテゴリ（固定8種、または「その他」選択時の自由入力テキスト。未選択(null)も許容）';
+comment on column public.events.category is 'カテゴリ（固定16種、または「その他」選択時の自由入力テキスト。未選択(null)も許容）';
 
 -- 支部×日付での一覧表示が主用途なので複合インデックスを用意
 create index if not exists idx_events_branch_date on public.events (branch, date);

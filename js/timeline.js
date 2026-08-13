@@ -2,9 +2,10 @@ import { colorForCategory, DEFAULT_CATEGORY_COLOR } from './categories.js';
 
 const START_HOUR = 0;
 const END_HOUR = 24;
-const HOUR_HEIGHT = 48; // px
+const HOUR_HEIGHT = 96; // px（10分刻み表示のため1時間あたりの高さを拡大）
+const SLOT_MINUTES = 10; // 目盛りの刻み
 const NO_END_DURATION_MINUTES = 30; // 終了時間未入力イベントの固定ブロック幅
-const MIN_DURATION_MINUTES = 15; // 極端に短いブロックでも視認できる最低の高さ
+const MIN_DURATION_MINUTES = 10; // 極端に短いブロックでも視認できる最低の高さ（10分刻みに合わせる）
 const MIN_BLOCK_HEIGHT_PX = 22; // どんなに短くても最低これだけの高さは確保する
 const COMPACT_HEIGHT_PX = 34; // これ未満は時刻+場所を1行にまとめる
 const CONTENT_HEIGHT_PX = 52; // これ未満は活動内容を省略する
@@ -84,17 +85,22 @@ export function renderTimeline(container, events) {
   const track = document.createElement('div');
   track.className = 'timeline-track';
 
-  for (let hour = START_HOUR; hour < END_HOUR; hour++) {
-    const top = (hour - START_HOUR) * HOUR_HEIGHT;
+  const startMinutes = START_HOUR * 60;
+  const endMinutes = END_HOUR * 60;
+  for (let minutes = startMinutes; minutes < endMinutes; minutes += SLOT_MINUTES) {
+    const top = ((minutes - startMinutes) / 60) * HOUR_HEIGHT;
+    const isHourMark = minutes % 60 === 0;
+    const hour = Math.floor(minutes / 60);
+    const minute = minutes % 60;
 
     const label = document.createElement('div');
-    label.className = 'timeline-hour-label';
+    label.className = isHourMark ? 'timeline-hour-label' : 'timeline-minute-label';
     label.style.top = `${top}px`;
-    label.textContent = `${hour}:00`;
+    label.textContent = isHourMark ? `${hour}:00` : `:${String(minute).padStart(2, '0')}`;
     labels.appendChild(label);
 
     const line = document.createElement('div');
-    line.className = 'timeline-hour-line';
+    line.className = isHourMark ? 'timeline-hour-line' : 'timeline-minute-line';
     line.style.top = `${top}px`;
     track.appendChild(line);
   }

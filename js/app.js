@@ -6,6 +6,7 @@ import {
   OTHER_CATEGORY,
   colorForCategory,
   splitCategoryForEdit,
+  iconsForCategories,
 } from './categories.js';
 import {
   toDateStr,
@@ -29,6 +30,7 @@ const state = {
   selectedDate: toDateStr(new Date()),
   calendarMonth: startOfMonth(new Date()),
   eventDates: new Set(),
+  eventCategoriesByDate: new Map(),
   events: [],
   viewMode: 'list',
   supabase: null,
@@ -202,16 +204,16 @@ function restoreSession() {
   updateNameDisplay();
 
   const savedBranch = localStorage.getItem('aichi-schedule:branch') || '';
+  if (savedBranch && BRANCHES.includes(savedBranch)) {
+    state.branch = savedBranch;
+    els.branchSelect.value = savedBranch;
+  }
 
-  const savedPassword = sessionStorage.getItem('aichi-schedule:password');
-  const savedRole = sessionStorage.getItem('aichi-schedule:role');
+  const savedPassword = localStorage.getItem('aichi-schedule:password');
+  const savedRole = localStorage.getItem('aichi-schedule:role');
   if (savedPassword && savedRole) {
     state.password = savedPassword;
     state.role = savedRole;
-    if (savedBranch && BRANCHES.includes(savedBranch)) {
-      state.branch = savedBranch;
-      els.branchSelect.value = savedBranch;
-    }
     enterApp();
   }
 }
@@ -226,8 +228,8 @@ function handleLoginSubmit(event) {
   }
   state.password = password;
   state.role = role;
-  sessionStorage.setItem('aichi-schedule:password', password);
-  sessionStorage.setItem('aichi-schedule:role', role);
+  localStorage.setItem('aichi-schedule:password', password);
+  localStorage.setItem('aichi-schedule:role', role);
   enterApp();
 }
 
@@ -236,8 +238,8 @@ function handleLogout() {
     state.supabase.removeChannel(state.realtimeChannel);
     state.realtimeChannel = null;
   }
-  sessionStorage.removeItem('aichi-schedule:password');
-  sessionStorage.removeItem('aichi-schedule:role');
+  localStorage.removeItem('aichi-schedule:password');
+  localStorage.removeItem('aichi-schedule:role');
   state.password = null;
   state.role = null;
 
@@ -280,6 +282,7 @@ function changeMonth(diff) {
 
 async function refreshMonthDates() {
   state.eventDates = new Set();
+  state.eventCategoriesByDate = new Map();
   if (!state.branch || !state.supabase) {
     renderCalendar();
     return;
@@ -287,7 +290,7 @@ async function refreshMonthDates() {
   const { start, end } = formatMonthRange(state.calendarMonth);
   const { data, error } = await state.supabase
     .from('events')
-    .select('date')
+    .select('date, category')
     .eq('branch', state.branch)
     .gte('date', start)
     .lte('date', end);
@@ -296,6 +299,14 @@ async function refreshMonthDates() {
     console.error(error);
   } else {
     state.eventDates = new Set(data.map((row) => row.date));
+    for (const row of data) {
+      if (!row.category) continue;
+      if (!state.eventCategoriesByDate.has(row.date)) {
+        state.eventCategoriesByDate.set(row.date, []);
+      }
+      const categories = state.eventCategoriesByDate.get(row.date);
+      if (!categories.includes(row.category)) categories.push(row.category);
+    }
   }
   renderCalendar();
 }
@@ -387,14 +398,49 @@ function renderCalendar() {
     cell.appendChild(num);
 
     if (state.eventDates.has(dateStr)) {
-      const dot = document.createElement('span');
-      dot.className = 'day-dot';
-      cell.appendChild(dot);
+      const categories = state.eventCategoriesByDate.get(dateStr) || [];
+      if (categories.length > 0) {
+        cell.appendChild(createDayCategoryIcons(categories));
+      } else {
+        const dot = document.createElement('span');
+        dot.className = 'day-dot';
+        cell.appendChild(dot);
+      }
     }
 
     cell.addEventListener('click', () => selectDate(dateStr));
     els.calendarGrid.appendChild(cell);
   }
+}
+
+const MAX_DAY_CATEGORY_ICONS = 3;
+
+function createDayCategoryIcons(categories) {
+  const wrap = document.createElement('span');
+  wrap.className = 'day-cat-icons';
+
+  const shown = categories.slice(0, MAX_DAY_CATEGORY_ICONS);
+  const iconLabels = iconsForCategories(shown);
+
+  for (const category of shown) {
+    const icon = document.createElement('span');
+    icon.className = 'day-cat-icon';
+    icon.textContent = iconLabels[category];
+    icon.style.backgroundColor = colorForCategory(category);
+    icon.title = category;
+    wrap.appendChild(icon);
+  }
+
+  const overflow = categories.length - shown.length;
+  if (overflow > 0) {
+    const more = document.createElement('span');
+    more.className = 'day-cat-icon day-cat-icon-more';
+    more.textContent = `+${overflow}`;
+    more.title = categories.slice(MAX_DAY_CATEGORY_ICONS).join('、');
+    wrap.appendChild(more);
+  }
+
+  return wrap;
 }
 
 function selectDate(dateStr) {
