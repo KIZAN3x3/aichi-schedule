@@ -297,6 +297,16 @@ body {
   padding: 4px 0;
 }
 
+.weekday-cell:first-child {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.weekday-cell:last-child {
+  color: #3b6fd6;
+  font-weight: 700;
+}
+
 .day-cell {
   position: relative;
   aspect-ratio: 1 / 1;
@@ -325,6 +335,20 @@ body {
 .day-cell.is-selected {
   background: linear-gradient(135deg, var(--orange-light), var(--orange-dark));
   color: #fff;
+}
+
+.day-cell.is-sunday-or-holiday .day-number {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.day-cell.is-saturday .day-number {
+  color: #3b6fd6;
+  font-weight: 700;
+}
+
+.day-cell.is-selected .day-number {
+  color: #fff !important;
 }
 
 .day-dot {

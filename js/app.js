@@ -18,6 +18,7 @@ import {
   WEEKDAY_LABELS,
 } from './date-utils.js';
 import { renderTimeline } from './timeline.js';
+import { loadHolidays, isHoliday } from './holidays.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
@@ -76,11 +77,12 @@ const els = {
 
 init();
 
-function init() {
+async function init() {
   populateBranchOptions();
   populateCategorySelect(els.eventCategorySelect);
   bindCategoryToggle(els.eventCategorySelect, els.eventCategoryOtherWrap);
   renderWeekdayHeader();
+  await loadHolidays();
   bindStaticEvents();
   restoreSession();
 }
@@ -391,6 +393,13 @@ function renderCalendar() {
     cell.className = 'day-cell';
     if (dateStr === todayStr) cell.classList.add('is-today');
     if (dateStr === state.selectedDate) cell.classList.add('is-selected');
+
+    const weekday = new Date(year, month, day).getDay();
+    if (weekday === 0 || isHoliday(dateStr)) {
+      cell.classList.add('is-sunday-or-holiday');
+    } else if (weekday === 6) {
+      cell.classList.add('is-saturday');
+    }
 
     const num = document.createElement('span');
     num.className = 'day-number';
