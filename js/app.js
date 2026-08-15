@@ -39,6 +39,7 @@ const state = {
 };
 
 const els = {
+  bootLoading: document.getElementById('boot-loading'),
   loginScreen: document.getElementById('login-screen'),
   loginForm: document.getElementById('login-form'),
   passwordInput: document.getElementById('password-input'),
@@ -213,10 +214,13 @@ function restoreSession() {
 
   const savedPassword = localStorage.getItem('aichi-schedule:password');
   const savedRole = localStorage.getItem('aichi-schedule:role');
+  els.bootLoading.classList.add('hidden');
   if (savedPassword && savedRole) {
     state.password = savedPassword;
     state.role = savedRole;
     enterApp();
+  } else {
+    els.loginScreen.classList.remove('hidden');
   }
 }
 
