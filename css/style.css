@@ -159,26 +159,19 @@ body {
 
 .status-name-btn {
   flex: 1;
-  min-width: 0;
+  min-width: 80px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  background: rgba(255, 255, 255, 0.15);
+  background: #fff;
   border: none;
   border-radius: 8px;
-  padding: 6px 10px;
-  color: #fff;
+  padding: 10px 12px;
+  color: var(--text);
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 600;
   cursor: pointer;
   text-align: left;
-}
-
-.status-name-hint {
-  font-size: 13px;
-  text-decoration: underline;
-  opacity: 0.9;
-  white-space: nowrap;
 }
 
 .status-name-btn span:first-child {

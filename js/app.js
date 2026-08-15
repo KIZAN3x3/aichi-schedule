@@ -21,7 +21,7 @@ import { renderTimeline } from './timeline.js';
 import { loadHolidays, isHoliday } from './holidays.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
-const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
+const ROLE_LABELS = { user: '一般', admin: '管理者' };
 
 const state = {
   role: null,
