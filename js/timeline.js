@@ -67,7 +67,7 @@ function computeBlocks(events) {
   return blocks;
 }
 
-export function renderTimeline(container, events) {
+export function renderTimeline(container, events, onBlockClick) {
   container.innerHTML = '';
 
   const totalHeight = (END_HOUR - START_HOUR) * HOUR_HEIGHT;
@@ -107,7 +107,7 @@ export function renderTimeline(container, events) {
 
   const blocks = computeBlocks(events);
   for (const block of blocks) {
-    track.appendChild(createTimelineBlock(block));
+    track.appendChild(createTimelineBlock(block, onBlockClick));
   }
 
   inner.appendChild(labels);
@@ -118,7 +118,7 @@ export function renderTimeline(container, events) {
   scrollToFirstBlock(scroll, blocks);
 }
 
-function createTimelineBlock({ event, start, end, column, columnCount }) {
+function createTimelineBlock({ event, start, end, column, columnCount }, onBlockClick) {
   const el = document.createElement('div');
   el.className = 'timeline-block';
   const heightPx = Math.max(((end - start) / 60) * HOUR_HEIGHT - 2, MIN_BLOCK_HEIGHT_PX);
@@ -132,6 +132,11 @@ function createTimelineBlock({ event, start, end, column, columnCount }) {
   const endLabel = event.end_time ? formatHm(event.end_time) : '';
   const timeText = endLabel ? `${startLabel}–${endLabel}` : startLabel;
   el.title = `${startLabel}${endLabel ? '〜' + endLabel : ''} ${event.place}\n${event.content}`;
+
+  el.style.cursor = 'pointer';
+  el.addEventListener('click', () => {
+    if (onBlockClick) onBlockClick(event.id);
+  });
 
   if (heightPx < COMPACT_HEIGHT_PX) {
     el.classList.add('timeline-block-compact');

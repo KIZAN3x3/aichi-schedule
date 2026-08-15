@@ -517,6 +517,15 @@ body {
   border-radius: 999px;
 }
 
+.event-card-highlight {
+  animation: event-card-flash 1.5s ease;
+}
+
+@keyframes event-card-flash {
+  0% { box-shadow: 0 0 0 3px var(--orange-mid); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+
 .event-card-editing {
   gap: 8px;
 }

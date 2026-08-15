@@ -513,7 +513,24 @@ function renderTimelineBody(errorMessage) {
     return;
   }
 
-  renderTimeline(els.timelineView, state.events);
+  renderTimeline(els.timelineView, state.events, handleTimelineBlockClick);
+}
+
+function handleTimelineBlockClick(eventId) {
+  state.viewMode = 'list';
+  els.viewListBtn.classList.add('is-active');
+  els.viewListBtn.setAttribute('aria-selected', 'true');
+  els.viewTimelineBtn.classList.remove('is-active');
+  els.viewTimelineBtn.setAttribute('aria-selected', 'false');
+  renderCurrentView();
+
+  requestAnimationFrame(() => {
+    const cardEl = els.eventList.querySelector(`[data-event-id="${eventId}"]`);
+    if (!cardEl) return;
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    cardEl.classList.add('event-card-highlight');
+    setTimeout(() => cardEl.classList.remove('event-card-highlight'), 1500);
+  });
 }
 
 function hintEl(text) {
@@ -526,6 +543,7 @@ function hintEl(text) {
 function createEventCard(event) {
   const card = document.createElement('article');
   card.className = 'event-card';
+  card.dataset.eventId = event.id;
   if (event.end_time) {
     card.classList.add('is-finished');
   }
