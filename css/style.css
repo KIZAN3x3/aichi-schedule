@@ -489,6 +489,20 @@ body {
   gap: 6px;
 }
 
+.event-card.is-finished {
+  opacity: 0.7;
+  background: #faf7f2;
+}
+
+.finished-badge {
+  background: var(--text-muted);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
 .event-card-editing {
   gap: 8px;
 }

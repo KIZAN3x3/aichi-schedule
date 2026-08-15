@@ -117,8 +117,8 @@ function restoreSession() {
   state.myName = savedName;
   updateNameDisplay();
 
-  const savedPassword = sessionStorage.getItem('aichi-schedule:password');
-  const savedRole = sessionStorage.getItem('aichi-schedule:role');
+  const savedPassword = localStorage.getItem('aichi-schedule:password');
+  const savedRole = localStorage.getItem('aichi-schedule:role');
   if (savedPassword && savedRole) {
     state.password = savedPassword;
     state.role = savedRole;
@@ -136,8 +136,8 @@ function handleLoginSubmit(event) {
   }
   state.password = password;
   state.role = role;
-  sessionStorage.setItem('aichi-schedule:password', password);
-  sessionStorage.setItem('aichi-schedule:role', role);
+  localStorage.setItem('aichi-schedule:password', password);
+  localStorage.setItem('aichi-schedule:role', role);
   enterApp();
 }
 
@@ -146,8 +146,8 @@ function handleLogout() {
     state.supabase.removeChannel(state.realtimeChannel);
     state.realtimeChannel = null;
   }
-  sessionStorage.removeItem('aichi-schedule:password');
-  sessionStorage.removeItem('aichi-schedule:role');
+  localStorage.removeItem('aichi-schedule:password');
+  localStorage.removeItem('aichi-schedule:role');
   state.password = null;
   state.role = null;
 

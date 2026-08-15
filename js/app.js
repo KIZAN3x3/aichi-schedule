@@ -522,6 +522,9 @@ function hintEl(text) {
 function createEventCard(event) {
   const card = document.createElement('article');
   card.className = 'event-card';
+  if (event.end_time) {
+    card.classList.add('is-finished');
+  }
 
   const header = document.createElement('div');
   header.className = 'event-card-header';
@@ -535,6 +538,12 @@ function createEventCard(event) {
   place.textContent = event.place;
   header.appendChild(time);
   header.appendChild(place);
+  if (event.end_time) {
+    const finishedBadge = document.createElement('span');
+    finishedBadge.className = 'finished-badge';
+    finishedBadge.textContent = '終了済み';
+    header.appendChild(finishedBadge);
+  }
   if (event.category) {
     header.appendChild(createCategoryBadge(event.category));
   }
@@ -618,17 +627,21 @@ function createActionsRow(event, card) {
   row.className = 'event-actions';
 
   const canEdit = state.role === 'admin' || event.poster_name === state.myName;
-  if (!canEdit) return row;
+  const isParticipant = event.participants.some((p) => p.participant_name === state.myName);
+  const canFinish = canEdit || isParticipant;
 
-  const editBtn = document.createElement('button');
-  editBtn.type = 'button';
-  editBtn.className = 'btn btn-outline btn-small';
-  editBtn.textContent = '編集';
-  editBtn.addEventListener('click', () => enterEditMode(event, card));
+  if (!canEdit && !canFinish) return row;
 
-  row.appendChild(editBtn);
+  if (canEdit) {
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'btn btn-outline btn-small';
+    editBtn.textContent = '編集';
+    editBtn.addEventListener('click', () => enterEditMode(event, card));
+    row.appendChild(editBtn);
+  }
 
-  if (!event.end_time) {
+  if (!event.end_time && canFinish) {
     const finishBtn = document.createElement('button');
     finishBtn.type = 'button';
     finishBtn.className = 'btn btn-outline btn-small';
@@ -650,25 +663,27 @@ function createActionsRow(event, card) {
     row.appendChild(finishBtn);
   }
 
-  const deleteBtn = document.createElement('button');
-  deleteBtn.type = 'button';
-  deleteBtn.className = 'btn btn-danger btn-small';
-  deleteBtn.textContent = '削除';
-  deleteBtn.addEventListener('click', async () => {
-    if (!confirm('この予定を削除しますか？')) return;
-    try {
-      await api.deleteEvent(event.id, {
-        poster_name: event.poster_name,
-        password: state.password,
-      });
-      await refreshMonthDates();
-      await refreshEvents();
-    } catch (err) {
-      alert(err.message);
-    }
-  });
+  if (canEdit) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn btn-danger btn-small';
+    deleteBtn.textContent = '削除';
+    deleteBtn.addEventListener('click', async () => {
+      if (!confirm('この予定を削除しますか？')) return;
+      try {
+        await api.deleteEvent(event.id, {
+          poster_name: event.poster_name,
+          password: state.password,
+        });
+        await refreshMonthDates();
+        await refreshEvents();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+    row.appendChild(deleteBtn);
+  }
 
-  row.appendChild(deleteBtn);
   return row;
 }
 
