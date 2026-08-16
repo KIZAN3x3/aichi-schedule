@@ -2,14 +2,14 @@ const { getSupabaseClient } = require('../_lib/supabase');
 const { resolveRole } = require('../_lib/auth');
 const { sendJson, methodNotAllowed } = require('../_lib/http');
 
-// PUT /api/equipment/:id    場所・メモ更新（一般・管理者とも同一権限）。画像は新規登録時のみ設定可、編集では変更不可
+// PUT /api/equipment/:id    品目名・場所・画像・メモ更新（一般・管理者とも同一権限）
 // DELETE /api/equipment/:id 備品削除（マスター管理者のみ）
 module.exports = async (req, res) => {
   const { id } = req.query;
   const supabase = getSupabaseClient();
 
   if (req.method === 'PUT') {
-    const { item_name, management_number, location, memo, updated_by, password } = req.body || {};
+    const { item_name, management_number, location, image_url, memo, updated_by, password } = req.body || {};
     const role = resolveRole(password);
     if (!role) {
       return sendJson(res, 401, { error: 'パスワードが違います' });
@@ -31,6 +31,7 @@ module.exports = async (req, res) => {
     if (item_name !== undefined) updates.item_name = item_name;
     if (management_number !== undefined) updates.management_number = management_number;
     if (location !== undefined) updates.location = location;
+    if (image_url !== undefined) updates.image_url = image_url;
     if (memo !== undefined) updates.memo = memo;
 
     const { data, error } = await supabase

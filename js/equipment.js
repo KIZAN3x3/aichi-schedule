@@ -532,9 +532,10 @@ function enterEditMode(item, detail) {
   detail.innerHTML = '';
   detail.classList.add('equipment-card-editing');
 
-  const nameLabel = document.createElement('p');
-  nameLabel.className = 'equipment-name';
-  nameLabel.textContent = item.item_name;
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.value = item.item_name;
+  nameInput.placeholder = '品目名';
 
   const managementNumberInput = document.createElement('input');
   managementNumberInput.type = 'text';
@@ -545,6 +546,45 @@ function enterEditMode(item, detail) {
   locationInput.type = 'text';
   locationInput.value = item.location;
   locationInput.placeholder = '保管場所';
+
+  let editSelectedImageFile = null;
+
+  const imagePreview = document.createElement('img');
+  imagePreview.className = 'image-preview';
+  if (item.image_url) {
+    imagePreview.src = item.image_url;
+    imagePreview.classList.add('visible');
+  }
+
+  const imageFileInput = document.createElement('input');
+  imageFileInput.type = 'file';
+  imageFileInput.accept = 'image/png,image/jpeg,image/webp,image/gif';
+
+  const imageCameraInput = document.createElement('input');
+  imageCameraInput.type = 'file';
+  imageCameraInput.accept = 'image/*';
+  imageCameraInput.capture = 'environment';
+  imageCameraInput.classList.add('hidden');
+
+  const imageCameraBtn = document.createElement('button');
+  imageCameraBtn.type = 'button';
+  imageCameraBtn.className = 'btn btn-outline btn-small';
+  imageCameraBtn.textContent = '📷 写真を撮る';
+  imageCameraBtn.addEventListener('click', () => imageCameraInput.click());
+
+  const handleEditImageSelected = (file) => {
+    editSelectedImageFile = file || null;
+    previewImageFile(file, imagePreview);
+  };
+
+  imageFileInput.addEventListener('change', () => {
+    handleEditImageSelected(imageFileInput.files[0]);
+    imageCameraInput.value = '';
+  });
+  imageCameraInput.addEventListener('change', () => {
+    handleEditImageSelected(imageCameraInput.files[0]);
+    imageFileInput.value = '';
+  });
 
   const memoInput = document.createElement('textarea');
   memoInput.value = item.memo || '';
@@ -564,23 +604,40 @@ function enterEditMode(item, detail) {
   saveBtn.textContent = '保存';
   saveBtn.addEventListener('click', async () => {
     const updatedBy = updatedByInput.value.trim();
+    const itemName = nameInput.value.trim();
+    if (!itemName) {
+      errorText.textContent = '品目名を入力してください';
+      return;
+    }
     if (!updatedBy) {
       errorText.textContent = '更新者名を入力してください';
       return;
     }
     saveBtn.disabled = true;
     try {
-      await api.updateEquipment(item.id, {
+      const payload = {
+        item_name: itemName,
         management_number: managementNumberInput.value.trim(),
         location: locationInput.value.trim(),
         memo: memoInput.value.trim(),
         updated_by: updatedBy,
         password: state.password,
-      });
+      };
+
+      if (editSelectedImageFile) {
+        saveBtn.textContent = '画像を処理中…';
+        const resized = await resizeImage(editSelectedImageFile);
+        saveBtn.textContent = 'アップロード中…';
+        payload.image_url = await uploadImage(resized);
+        saveBtn.textContent = '保存';
+      }
+
+      await api.updateEquipment(item.id, payload);
       await fetchItems();
     } catch (err) {
       errorText.textContent = err.message;
       saveBtn.disabled = false;
+      saveBtn.textContent = '保存';
     }
   });
 
@@ -595,9 +652,13 @@ function enterEditMode(item, detail) {
   actions.appendChild(saveBtn);
   actions.appendChild(cancelBtn);
 
-  detail.appendChild(nameLabel);
+  detail.appendChild(nameInput);
   detail.appendChild(managementNumberInput);
   detail.appendChild(locationInput);
+  detail.appendChild(imagePreview);
+  detail.appendChild(imageFileInput);
+  detail.appendChild(imageCameraBtn);
+  detail.appendChild(imageCameraInput);
   detail.appendChild(memoInput);
   detail.appendChild(updatedByInput);
   detail.appendChild(errorText);

@@ -857,12 +857,6 @@ body {
   gap: 6px;
 }
 
-.equipment-name {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-}
-
 .equipment-management-number {
   margin: 0;
   font-size: 13px;
