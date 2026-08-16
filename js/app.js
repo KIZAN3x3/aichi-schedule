@@ -683,6 +683,26 @@ function createActionsRow(event, card) {
       }
     });
     row.appendChild(finishBtn);
+  } else if (event.finished_at && canFinish) {
+    const reopenBtn = document.createElement('button');
+    reopenBtn.type = 'button';
+    reopenBtn.className = 'btn btn-muted btn-small';
+    reopenBtn.textContent = '戻す';
+    reopenBtn.addEventListener('click', async () => {
+      reopenBtn.disabled = true;
+      try {
+        await api.updateEvent(event.id, {
+          finished: false,
+          poster_name: event.poster_name,
+          password: state.password,
+        });
+        await refreshEvents();
+      } catch (err) {
+        alert(err.message);
+        reopenBtn.disabled = false;
+      }
+    });
+    row.appendChild(reopenBtn);
   }
 
   if (canEdit) {

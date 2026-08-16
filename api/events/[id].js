@@ -47,6 +47,7 @@ module.exports = async (req, res) => {
     if (content !== undefined) updates.content = content;
     if (category !== undefined) updates.category = category.trim() || null;
     if (finished === true) updates.finished_at = new Date().toISOString();
+    if (finished === false) updates.finished_at = null;
 
     const { data, error } = await supabase
       .from('events')
