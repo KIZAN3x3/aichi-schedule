@@ -68,8 +68,10 @@
         </label>
         <label>
           画像（任意）
-          <input type="file" id="item-image" accept="image/png,image/jpeg,image/webp,image/gif" capture="environment" />
+          <input type="file" id="item-image" accept="image/png,image/jpeg,image/webp,image/gif" />
         </label>
+        <button type="button" id="item-image-camera-btn" class="btn btn-outline btn-small">📷 写真を撮る</button>
+        <input type="file" id="item-image-camera" accept="image/*" capture="environment" class="hidden" />
         <img id="item-image-preview" class="image-preview" alt="画像プレビュー" />
         <label>
           メモ（任意）

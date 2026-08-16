@@ -18,6 +18,7 @@ const state = {
   realtimeChannel: null,
   viewMode: 'tile',
   summaryFilter: null,
+  selectedImageFile: null,
 };
 
 const els = {
@@ -42,6 +43,8 @@ const els = {
   itemManagementNumber: document.getElementById('item-management-number'),
   itemLocation: document.getElementById('item-location'),
   itemImage: document.getElementById('item-image'),
+  itemImageCameraBtn: document.getElementById('item-image-camera-btn'),
+  itemImageCamera: document.getElementById('item-image-camera'),
   itemImagePreview: document.getElementById('item-image-preview'),
   itemMemo: document.getElementById('item-memo'),
   itemUpdatedBy: document.getElementById('item-updated-by'),
@@ -92,7 +95,17 @@ function bindStaticEvents() {
   });
 
   els.itemImage.addEventListener('change', () => {
-    previewImageFile(els.itemImage.files[0], els.itemImagePreview);
+    handleImageFileSelected(els.itemImage.files[0]);
+    els.itemImageCamera.value = '';
+  });
+
+  els.itemImageCameraBtn.addEventListener('click', () => {
+    els.itemImageCamera.click();
+  });
+
+  els.itemImageCamera.addEventListener('change', () => {
+    handleImageFileSelected(els.itemImageCamera.files[0]);
+    els.itemImage.value = '';
   });
 
   els.itemForm.addEventListener('submit', handleCreateItem);
@@ -103,6 +116,11 @@ function bindStaticEvents() {
     state.summaryFilter = null;
     renderEquipmentList();
   });
+}
+
+function handleImageFileSelected(file) {
+  state.selectedImageFile = file || null;
+  previewImageFile(file, els.itemImagePreview);
 }
 
 function previewImageFile(file, imgEl) {
@@ -669,7 +687,7 @@ async function handleCreateItem(event) {
   els.itemFormSubmit.disabled = true;
   try {
     let imageUrl = '';
-    const file = els.itemImage.files[0];
+    const file = state.selectedImageFile;
     if (file) {
       els.itemFormSubmit.textContent = '画像を処理中…';
       const resized = await resizeImage(file);
@@ -689,6 +707,7 @@ async function handleCreateItem(event) {
     });
 
     els.itemForm.reset();
+    state.selectedImageFile = null;
     els.itemImagePreview.classList.remove('visible');
     els.itemForm.classList.add('hidden');
     els.newItemToggleBtn.textContent = '＋ 備品を登録';
