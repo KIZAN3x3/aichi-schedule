@@ -5,6 +5,8 @@ const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION = 1600;
+const RESIZE_QUALITIES = [0.8, 0.6, 0.4];
 const BUCKET = 'equipment-images';
 
 const state = {
@@ -487,6 +489,53 @@ function enterEditMode(item, detail) {
   detail.appendChild(actions);
 }
 
+function loadImageElement(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('画像の読み込みに失敗しました'));
+    };
+    img.src = url;
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+function toJpgFileName(name) {
+  const base = name.replace(/\.[^./]+$/, '') || 'image';
+  return `${base}.jpg`;
+}
+
+// アップロード前に長辺1600px以下・JPEG品質0.8〜0.4に段階的に再圧縮する
+async function resizeImage(file) {
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    throw new Error('対応していない画像形式です（PNG/JPEG/WebP/GIFのみ）');
+  }
+
+  const img = await loadImageElement(file);
+  const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(img.width, img.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  for (const quality of RESIZE_QUALITIES) {
+    const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+    if (blob && blob.size <= MAX_IMAGE_BYTES) {
+      return new File([blob], toJpgFileName(file.name), { type: 'image/jpeg' });
+    }
+  }
+  throw new Error('画像を圧縮しても5MBを超えています。別の画像を選んでください');
+}
+
 async function uploadImage(file) {
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
     throw new Error('対応していない画像形式です（PNG/JPEG/WebP/GIFのみ）');
@@ -519,12 +568,17 @@ async function handleCreateItem(event) {
     return;
   }
 
+  const submitLabel = els.itemFormSubmit.textContent;
   els.itemFormSubmit.disabled = true;
   try {
     let imageUrl = '';
     const file = els.itemImage.files[0];
     if (file) {
-      imageUrl = await uploadImage(file);
+      els.itemFormSubmit.textContent = '画像を処理中…';
+      const resized = await resizeImage(file);
+      els.itemFormSubmit.textContent = 'アップロード中…';
+      imageUrl = await uploadImage(resized);
+      els.itemFormSubmit.textContent = submitLabel;
     }
 
     await api.createEquipment({
@@ -546,6 +600,7 @@ async function handleCreateItem(event) {
     els.itemFormError.textContent = err.message;
   } finally {
     els.itemFormSubmit.disabled = false;
+    els.itemFormSubmit.textContent = submitLabel;
   }
 }
 
