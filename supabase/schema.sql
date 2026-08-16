@@ -73,13 +73,14 @@ create index if not exists idx_participants_event_id on public.participants (eve
 -- equipment: 全体共通の備品管理（支部の区別なし）
 -- ------------------------------------------------------------
 create table if not exists public.equipment (
-  id          uuid primary key default gen_random_uuid(),
-  item_name   text not null,
-  location    text not null,
-  image_url   text,
-  memo        text,
-  updated_by  text not null,
-  updated_at  timestamptz not null default now()
+  id                 uuid primary key default gen_random_uuid(),
+  item_name          text not null,
+  management_number  text,
+  location           text not null,
+  image_url          text,
+  memo               text,
+  updated_by         text not null,
+  updated_at         timestamptz not null default now()
 );
 
 comment on table public.equipment is '全体共通の備品リスト（支部を跨いで共有）';

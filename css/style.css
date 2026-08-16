@@ -765,6 +765,12 @@ body {
   word-break: break-word;
 }
 
+.equipment-tile-number {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 .equipment-tile.has-image {
   justify-content: flex-end;
   padding: 0;
@@ -772,8 +778,16 @@ body {
 
 .equipment-tile.has-image .equipment-tile-name {
   width: 100%;
-  padding: 6px 8px;
+  padding: 6px 8px 0;
   background: linear-gradient(to top, rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0));
+  color: #fff;
+  text-align: left;
+}
+
+.equipment-tile.has-image .equipment-tile-number {
+  width: 100%;
+  padding: 0 8px 6px;
+  background: rgba(0, 0, 0, 0.65);
   color: #fff;
   text-align: left;
 }
@@ -797,6 +811,12 @@ body {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
+}
+
+.equipment-management-number {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .equipment-location {

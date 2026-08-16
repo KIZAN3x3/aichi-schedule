@@ -8,7 +8,7 @@ module.exports = async (req, res) => {
     return methodNotAllowed(res, ['POST']);
   }
 
-  const { item_name, location, image_url, memo, updated_by, password } = req.body || {};
+  const { item_name, management_number, location, image_url, memo, updated_by, password } = req.body || {};
   const role = resolveRole(password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
@@ -25,6 +25,7 @@ module.exports = async (req, res) => {
     .from('equipment')
     .insert({
       item_name,
+      management_number: management_number || null,
       location,
       image_url: image_url || null,
       memo: memo || null,

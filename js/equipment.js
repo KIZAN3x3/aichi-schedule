@@ -35,6 +35,7 @@ const els = {
   itemFormError: document.getElementById('item-form-error'),
   itemFormSubmit: document.getElementById('item-form-submit'),
   itemName: document.getElementById('item-name'),
+  itemManagementNumber: document.getElementById('item-management-number'),
   itemLocation: document.getElementById('item-location'),
   itemImage: document.getElementById('item-image'),
   itemImagePreview: document.getElementById('item-image-preview'),
@@ -270,6 +271,13 @@ function createEquipmentTile(item) {
   name.textContent = item.item_name;
   tile.appendChild(name);
 
+  if (item.management_number) {
+    const number = document.createElement('span');
+    number.className = 'equipment-tile-number';
+    number.textContent = `No. ${item.management_number}`;
+    tile.appendChild(number);
+  }
+
   const detail = document.createElement('div');
   detail.className = 'equipment-detail hidden';
   renderDetailBody(item, detail);
@@ -285,6 +293,13 @@ function createEquipmentTile(item) {
 function renderDetailBody(item, detail) {
   detail.innerHTML = '';
   detail.classList.remove('equipment-card-editing');
+
+  if (item.management_number) {
+    const number = document.createElement('p');
+    number.className = 'equipment-management-number';
+    number.textContent = `No. ${item.management_number}`;
+    detail.appendChild(number);
+  }
 
   const location = document.createElement('p');
   location.className = 'equipment-location';
@@ -404,6 +419,11 @@ function enterEditMode(item, detail) {
   nameLabel.className = 'equipment-name';
   nameLabel.textContent = item.item_name;
 
+  const managementNumberInput = document.createElement('input');
+  managementNumberInput.type = 'text';
+  managementNumberInput.value = item.management_number || '';
+  managementNumberInput.placeholder = '管理番号（任意）';
+
   const locationInput = document.createElement('input');
   locationInput.type = 'text';
   locationInput.value = item.location;
@@ -434,6 +454,7 @@ function enterEditMode(item, detail) {
     saveBtn.disabled = true;
     try {
       await api.updateEquipment(item.id, {
+        management_number: managementNumberInput.value.trim(),
         location: locationInput.value.trim(),
         memo: memoInput.value.trim(),
         updated_by: updatedBy,
@@ -458,6 +479,7 @@ function enterEditMode(item, detail) {
   actions.appendChild(cancelBtn);
 
   detail.appendChild(nameLabel);
+  detail.appendChild(managementNumberInput);
   detail.appendChild(locationInput);
   detail.appendChild(memoInput);
   detail.appendChild(updatedByInput);
@@ -507,6 +529,7 @@ async function handleCreateItem(event) {
 
     await api.createEquipment({
       item_name: els.itemName.value.trim(),
+      management_number: els.itemManagementNumber.value.trim(),
       location: els.itemLocation.value.trim(),
       image_url: imageUrl,
       memo: els.itemMemo.value.trim(),
