@@ -544,7 +544,7 @@ function createEventCard(event) {
   const card = document.createElement('article');
   card.className = 'event-card';
   card.dataset.eventId = event.id;
-  if (event.end_time) {
+  if (event.finished_at) {
     card.classList.add('is-finished');
   }
 
@@ -560,7 +560,7 @@ function createEventCard(event) {
   place.textContent = event.place;
   header.appendChild(time);
   header.appendChild(place);
-  if (event.end_time) {
+  if (event.finished_at) {
     const finishedBadge = document.createElement('span');
     finishedBadge.className = 'finished-badge';
     finishedBadge.textContent = '終了済み';
@@ -663,7 +663,7 @@ function createActionsRow(event, card) {
     row.appendChild(editBtn);
   }
 
-  if (!event.end_time && canFinish) {
+  if (!event.finished_at && canFinish) {
     const finishBtn = document.createElement('button');
     finishBtn.type = 'button';
     finishBtn.className = 'btn btn-outline btn-small';
@@ -672,7 +672,7 @@ function createActionsRow(event, card) {
       finishBtn.disabled = true;
       try {
         await api.updateEvent(event.id, {
-          end_time: nowTimeString(),
+          finished: true,
           poster_name: event.poster_name,
           password: state.password,
         });
@@ -707,13 +707,6 @@ function createActionsRow(event, card) {
   }
 
   return row;
-}
-
-function nowTimeString() {
-  const d = new Date();
-  const h = String(d.getHours()).padStart(2, '0');
-  const m = String(d.getMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
 }
 
 function enterEditMode(event, card) {

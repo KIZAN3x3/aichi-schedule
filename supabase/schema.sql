@@ -40,12 +40,14 @@ create table if not exists public.events (
   content      text not null,
   poster_name  text not null,
   category     text,
+  finished_at  timestamptz,
   created_at   timestamptz not null default now()
 );
 
 comment on table public.events is '支部ごとの活動スケジュール';
 comment on column public.events.branch is '支部名（1支部〜16支部の固定16件）';
 comment on column public.events.end_time is '終了時間（任意）。未入力ならタイムライン表示は固定の短いブロックとして描画';
+comment on column public.events.finished_at is '「終了」ボタンが押された日時（未終了ならnull）。予定終了時刻(end_time)とは別物';
 comment on column public.events.poster_name is '投稿者名（自己申告・Supabase Authは使わない）';
 comment on column public.events.category is 'カテゴリ（固定16種、または「その他」選択時の自由入力テキスト。未選択(null)も許容）';
 
