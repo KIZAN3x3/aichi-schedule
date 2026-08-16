@@ -83,7 +83,18 @@
         <button type="submit" class="btn btn-primary" id="item-form-submit">登録する</button>
       </form>
 
+      <div class="view-toggle" role="tablist">
+        <button type="button" id="view-tile-btn" class="view-toggle-btn is-active" role="tab" aria-selected="true">一覧</button>
+        <button type="button" id="view-summary-btn" class="view-toggle-btn" role="tab" aria-selected="false">種類別</button>
+      </div>
+
+      <div id="equipment-filter-banner" class="equipment-filter-banner hidden">
+        <span id="equipment-filter-label"></span>
+        <button type="button" id="equipment-filter-clear" class="btn btn-outline btn-small">絞り込み解除</button>
+      </div>
+
       <div id="equipment-list" class="equipment-grid"></div>
+      <div id="equipment-summary" class="equipment-summary-list hidden"></div>
     </section>
   </main>
 </div>

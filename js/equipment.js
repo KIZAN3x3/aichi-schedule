@@ -16,6 +16,8 @@ const state = {
   items: [],
   supabase: null,
   realtimeChannel: null,
+  viewMode: 'tile',
+  summaryFilter: null,
 };
 
 const els = {
@@ -43,7 +45,13 @@ const els = {
   itemImagePreview: document.getElementById('item-image-preview'),
   itemMemo: document.getElementById('item-memo'),
   itemUpdatedBy: document.getElementById('item-updated-by'),
+  viewTileBtn: document.getElementById('view-tile-btn'),
+  viewSummaryBtn: document.getElementById('view-summary-btn'),
+  equipmentFilterBanner: document.getElementById('equipment-filter-banner'),
+  equipmentFilterLabel: document.getElementById('equipment-filter-label'),
+  equipmentFilterClear: document.getElementById('equipment-filter-clear'),
   equipmentList: document.getElementById('equipment-list'),
+  equipmentSummary: document.getElementById('equipment-summary'),
 };
 
 init();
@@ -88,6 +96,13 @@ function bindStaticEvents() {
   });
 
   els.itemForm.addEventListener('submit', handleCreateItem);
+
+  els.viewTileBtn.addEventListener('click', () => setViewMode('tile'));
+  els.viewSummaryBtn.addEventListener('click', () => setViewMode('summary'));
+  els.equipmentFilterClear.addEventListener('click', () => {
+    state.summaryFilter = null;
+    renderEquipmentList();
+  });
 }
 
 function previewImageFile(file, imgEl) {
@@ -195,11 +210,34 @@ async function fetchItems() {
   if (error) {
     console.error(error);
     state.items = [];
-    renderEquipmentList('備品の取得に失敗しました');
+    renderFatalError('備品の取得に失敗しました');
     return;
   }
   state.items = data;
-  renderEquipmentList();
+  applyViewMode(state.viewMode);
+}
+
+function setViewMode(mode) {
+  if (mode === 'tile') {
+    state.summaryFilter = null;
+  }
+  applyViewMode(mode);
+}
+
+function applyViewMode(mode) {
+  state.viewMode = mode;
+  els.viewTileBtn.classList.toggle('is-active', mode === 'tile');
+  els.viewTileBtn.setAttribute('aria-selected', String(mode === 'tile'));
+  els.viewSummaryBtn.classList.toggle('is-active', mode === 'summary');
+  els.viewSummaryBtn.setAttribute('aria-selected', String(mode === 'summary'));
+  els.equipmentList.classList.toggle('hidden', mode !== 'tile');
+  els.equipmentSummary.classList.toggle('hidden', mode !== 'summary');
+
+  if (mode === 'tile') {
+    renderEquipmentList();
+  } else {
+    renderSummaryList();
+  }
 }
 
 function subscribeRealtime() {
@@ -218,24 +256,83 @@ function subscribeRealtime() {
 function renderLoadingState() {
   els.equipmentList.innerHTML = '';
   els.equipmentList.appendChild(hintEl('読み込み中…'));
+  els.equipmentSummary.innerHTML = '';
+  els.equipmentSummary.appendChild(hintEl('読み込み中…'));
 }
 
-function renderEquipmentList(errorMessage) {
+function renderEquipmentList() {
   els.equipmentList.innerHTML = '';
 
-  if (errorMessage) {
-    els.equipmentList.appendChild(hintEl(errorMessage));
-    return;
+  els.equipmentFilterBanner.classList.toggle('hidden', !state.summaryFilter);
+  if (state.summaryFilter) {
+    els.equipmentFilterLabel.textContent = `「${state.summaryFilter}」で絞り込み中`;
   }
-  if (state.items.length === 0) {
-    els.equipmentList.appendChild(hintEl('登録されている備品はありません'));
+
+  const items = state.summaryFilter
+    ? state.items.filter((item) => item.item_name === state.summaryFilter)
+    : state.items;
+
+  if (items.length === 0) {
+    els.equipmentList.appendChild(
+      hintEl(state.summaryFilter ? '該当する備品はありません' : '登録されている備品はありません')
+    );
     return;
   }
 
-  for (const item of state.items) {
+  for (const item of items) {
     const { tile, detail } = createEquipmentTile(item);
     els.equipmentList.appendChild(tile);
     els.equipmentList.appendChild(detail);
+  }
+}
+
+// item_nameでグループ化し、合計数と保管場所別の内訳をまとめる
+function renderSummaryList() {
+  els.equipmentSummary.innerHTML = '';
+
+  if (state.items.length === 0) {
+    els.equipmentSummary.appendChild(hintEl('登録されている備品はありません'));
+    return;
+  }
+
+  const groups = new Map();
+  for (const item of state.items) {
+    if (!groups.has(item.item_name)) {
+      groups.set(item.item_name, { count: 0, locations: new Map() });
+    }
+    const group = groups.get(item.item_name);
+    group.count += 1;
+    group.locations.set(item.location, (group.locations.get(item.location) || 0) + 1);
+  }
+
+  for (const [itemName, group] of groups) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'equipment-summary-row';
+
+    const name = document.createElement('span');
+    name.className = 'equipment-summary-name';
+    name.textContent = itemName;
+    row.appendChild(name);
+
+    const count = document.createElement('span');
+    count.className = 'equipment-summary-count';
+    count.textContent = `合計 ${group.count}個`;
+    row.appendChild(count);
+
+    const breakdown = document.createElement('span');
+    breakdown.className = 'equipment-summary-breakdown';
+    breakdown.textContent = [...group.locations.entries()]
+      .map(([location, locationCount]) => `${location}: ${locationCount}個`)
+      .join(' / ');
+    row.appendChild(breakdown);
+
+    row.addEventListener('click', () => {
+      state.summaryFilter = itemName;
+      applyViewMode('tile');
+    });
+
+    els.equipmentSummary.appendChild(row);
   }
 }
 
@@ -607,4 +704,6 @@ async function handleCreateItem(event) {
 function renderFatalError(message) {
   els.equipmentList.innerHTML = '';
   els.equipmentList.appendChild(hintEl(message));
+  els.equipmentSummary.innerHTML = '';
+  els.equipmentSummary.appendChild(hintEl(message));
 }
