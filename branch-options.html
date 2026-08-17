@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>候補管理 - 愛知活動スケジュール帳</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div id="boot-loading" class="boot-loading">
+  <div class="boot-loading-spinner"></div>
+</div>
+
+<section id="login-screen" class="login-screen hidden">
+  <div class="login-card">
+    <h1 class="app-title">愛知活動スケジュール帳</h1>
+    <form id="login-form" class="login-form">
+      <label for="password-input">パスワード</label>
+      <input type="password" id="password-input" inputmode="numeric" autocomplete="off" required />
+      <button type="submit" class="btn btn-primary">入る</button>
+      <p id="login-error" class="form-error"></p>
+    </form>
+  </div>
+</section>
+
+<div id="app" class="app hidden">
+  <header class="app-header">
+    <h1 class="app-title">愛知活動スケジュール帳</h1>
+    <div class="status-bar">
+      <span id="role-dot" class="status-dot"></span>
+      <span id="role-text" class="status-role"></span>
+      <span class="status-sep">・</span>
+      <button type="button" id="name-display-btn" class="status-name-btn">
+        <span id="name-display-value">お名前未設定</span>
+      </button>
+      <span id="name-edit-wrap" class="status-name-edit hidden">
+        <input type="text" id="name-input" placeholder="お名前" maxlength="20" />
+      </span>
+      <button type="button" id="logout-btn" class="status-logout-btn" title="ログアウト" aria-label="ログアウト">⎋</button>
+    </div>
+  </header>
+
+  <nav class="page-nav">
+    <a href="index.html" class="page-nav-link">スケジュール</a>
+    <a href="equipment.html" class="page-nav-link">備品管理</a>
+    <a href="branch-options.html" class="page-nav-link is-active">候補管理</a>
+  </nav>
+
+  <main class="app-main">
+    <section id="admin-only-notice" class="panel hidden">
+      <p class="hint-text">この画面はマスター管理者のみ利用できます。</p>
+    </section>
+
+    <section id="branch-options-panel" class="panel hidden">
+      <div class="branch-panel">
+        <label for="branch-options-select">支部を選択</label>
+        <select id="branch-options-select">
+          <option value="">-- 支部を選択 --</option>
+        </select>
+      </div>
+
+      <div id="branch-options-content" class="hidden">
+        <div class="branch-option-section">
+          <h2 class="selected-date-label">場所候補</h2>
+          <div id="place-options-list" class="branch-option-list"></div>
+        </div>
+
+        <div class="branch-option-section">
+          <h2 class="selected-date-label">カテゴリ候補</h2>
+          <div id="category-options-list" class="branch-option-list"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script type="module" src="js/branch-options.js"></script>
+</body>
+</html>

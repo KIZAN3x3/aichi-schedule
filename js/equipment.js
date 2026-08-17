@@ -36,6 +36,7 @@ const els = {
   nameEditWrap: document.getElementById('name-edit-wrap'),
   nameInput: document.getElementById('name-input'),
   newItemToggleBtn: document.getElementById('new-item-toggle-btn'),
+  pageNavBranchOptions: document.getElementById('page-nav-branch-options'),
   itemForm: document.getElementById('item-form'),
   itemFormError: document.getElementById('item-form-error'),
   itemFormSubmit: document.getElementById('item-form-submit'),
@@ -210,6 +211,7 @@ function enterApp() {
   els.roleText.textContent = ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
   els.newItemToggleBtn.classList.toggle('hidden', state.role !== 'admin');
+  els.pageNavBranchOptions.classList.toggle('hidden', state.role !== 'admin');
   boot();
 }
 

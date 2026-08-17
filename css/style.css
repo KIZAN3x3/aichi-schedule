@@ -290,6 +290,35 @@ body {
   border: 1px solid var(--border);
 }
 
+/* 候補管理（支部ごとの場所・カテゴリ候補） */
+.branch-option-section {
+  margin-top: 20px;
+}
+
+.branch-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.branch-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.branch-option-value {
+  font-size: 15px;
+  color: var(--text);
+  word-break: break-word;
+}
+
 /* カレンダー */
 .calendar-header {
   display: flex;

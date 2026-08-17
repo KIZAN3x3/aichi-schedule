@@ -28,4 +28,5 @@ export const api = {
   getBranchOptions: (branch, type) =>
     request(`/api/branch-options?branch=${encodeURIComponent(branch)}&type=${encodeURIComponent(type)}`, 'GET'),
   addBranchOption: (payload) => request('/api/branch-options', 'POST', payload),
+  deleteBranchOption: (payload) => request('/api/branch-options', 'DELETE', payload),
 };
