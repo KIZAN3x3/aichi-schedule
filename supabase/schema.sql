@@ -103,22 +103,62 @@ comment on table public.equipment_history is '備品の保管場所移動履歴�
 
 create index if not exists idx_equipment_history_equipment_id on public.equipment_history (equipment_id, moved_at desc);
 
+-- ------------------------------------------------------------
+-- branch_place_options / branch_category_options:
+-- 支部ごとに過去入力された「場所」「自由入力カテゴリ」の候補
+-- （イベント登録時にapi/events.js側で自動追加。次回以降の入力補完・プルダウン候補に使う）
+-- ------------------------------------------------------------
+create table if not exists public.branch_place_options (
+  id         uuid primary key default gen_random_uuid(),
+  branch     text not null check (
+               branch in (
+                 '1支部','2支部','3支部','4支部','5支部','6支部','7支部','8支部',
+                 '9支部','10支部','11支部','12支部','13支部','14支部','15支部','16支部'
+               )
+             ),
+  value      text not null,
+  created_at timestamptz not null default now(),
+  unique (branch, value)
+);
+
+create table if not exists public.branch_category_options (
+  id         uuid primary key default gen_random_uuid(),
+  branch     text not null check (
+               branch in (
+                 '1支部','2支部','3支部','4支部','5支部','6支部','7支部','8支部',
+                 '9支部','10支部','11支部','12支部','13支部','14支部','15支部','16支部'
+               )
+             ),
+  value      text not null,
+  created_at timestamptz not null default now(),
+  unique (branch, value)
+);
+
+comment on table public.branch_place_options is '支部ごとに過去入力された「場所」の候補（datalist用）';
+comment on table public.branch_category_options is '支部ごとに過去入力された自由入力「カテゴリ」の候補（プルダウン用）';
+
 -- ============================================================
 -- Row Level Security
 -- 読み取り(SELECT)はanonにも許可（Realtimeでの自動反映に必要）。
 -- 書き込みはanonには許可せず、api/*.js からservice role keyで実行する
 -- （service roleはRLSをバイパスするため専用ポリシーは不要）。
+-- branch_place_options / branch_category_optionsも読み取りはanonに許可する
+-- （書き込み=INSERTはapi/branch-options.js経由のみとし、anonには開放しない）。
 -- ============================================================
 
-alter table public.events            enable row level security;
-alter table public.participants      enable row level security;
-alter table public.equipment         enable row level security;
-alter table public.equipment_history enable row level security;
+alter table public.events                  enable row level security;
+alter table public.participants            enable row level security;
+alter table public.equipment               enable row level security;
+alter table public.equipment_history       enable row level security;
+alter table public.branch_place_options    enable row level security;
+alter table public.branch_category_options enable row level security;
 
-create policy "events_select_anon"            on public.events            for select using (true);
-create policy "participants_select_anon"      on public.participants      for select using (true);
-create policy "equipment_select_anon"         on public.equipment         for select using (true);
-create policy "equipment_history_select_anon" on public.equipment_history for select using (true);
+create policy "events_select_anon"                  on public.events                  for select using (true);
+create policy "participants_select_anon"            on public.participants            for select using (true);
+create policy "equipment_select_anon"               on public.equipment               for select using (true);
+create policy "equipment_history_select_anon"       on public.equipment_history       for select using (true);
+create policy "branch_place_options_select_anon"    on public.branch_place_options    for select using (true);
+create policy "branch_category_options_select_anon" on public.branch_category_options for select using (true);
 
 -- ============================================================
 -- Realtime: 他端末への自動反映用にpublicationへ追加

@@ -2,6 +2,8 @@ const { getSupabaseClient } = require('./_lib/supabase');
 const { resolveRole } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
+const { FIXED_CATEGORIES } = require('./_lib/categories');
+const { addBranchOption } = require('./_lib/branchOptions');
 
 // POST /api/events : 新規予定投稿（一般ユーザー・管理者どちらも可）
 module.exports = async (req, res) => {
@@ -48,5 +50,12 @@ module.exports = async (req, res) => {
   if (error) {
     return sendJson(res, 500, { error: error.message });
   }
+
+  // 場所・自由入力カテゴリを支部の候補として自動保存（失敗しても投稿自体は成功扱い）
+  await addBranchOption(supabase, { branch, type: 'place', value: place.trim() });
+  if (trimmedCategory && !FIXED_CATEGORIES.includes(trimmedCategory)) {
+    await addBranchOption(supabase, { branch, type: 'category', value: trimmedCategory });
+  }
+
   return sendJson(res, 201, data);
 };

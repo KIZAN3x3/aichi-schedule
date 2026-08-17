@@ -1,10 +1,11 @@
-// api/*.js（書き込み専用エンドポイント）への薄いラッパー
+// api/*.js への薄いラッパー。bodyを渡さなければGETとして送る。
 async function request(path, method, body) {
-  const res = await fetch(path, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const options = { method };
+  if (body !== undefined) {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, options);
 
   const contentType = res.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await res.json() : null;
@@ -24,4 +25,7 @@ export const api = {
   updateEquipment: (id, payload) => request(`/api/equipment/${id}`, 'PUT', payload),
   deleteEquipment: (id, payload) => request(`/api/equipment/${id}`, 'DELETE', payload),
   getEquipmentUploadUrl: (payload) => request('/api/equipment/upload-url', 'POST', payload),
+  getBranchOptions: (branch, type) =>
+    request(`/api/branch-options?branch=${encodeURIComponent(branch)}&type=${encodeURIComponent(type)}`, 'GET'),
+  addBranchOption: (payload) => request('/api/branch-options', 'POST', payload),
 };

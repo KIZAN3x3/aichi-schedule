@@ -2,7 +2,7 @@ import { BRANCHES } from './branches.js';
 import { getSupabaseClient } from './supabase-client.js';
 import { api } from './api.js';
 import {
-  CATEGORY_OPTIONS,
+  FIXED_CATEGORIES,
   OTHER_CATEGORY,
   colorForCategory,
   splitCategoryForEdit,
@@ -36,6 +36,8 @@ const state = {
   viewMode: 'list',
   supabase: null,
   realtimeChannel: null,
+  branchPlaceOptions: [],
+  branchCategoryOptions: [],
 };
 
 const els = {
@@ -69,6 +71,7 @@ const els = {
   eventTime: document.getElementById('event-time'),
   eventEndTime: document.getElementById('event-end-time'),
   eventPlace: document.getElementById('event-place'),
+  eventPlaceOptions: document.getElementById('event-place-options'),
   eventContent: document.getElementById('event-content'),
   eventCategorySelect: document.getElementById('event-category-select'),
   eventCategoryOtherWrap: document.getElementById('event-category-other-wrap'),
@@ -88,12 +91,55 @@ async function init() {
   restoreSession();
 }
 
+// 固定17種 + その支部の過去の自由入力カテゴリ候補（重複除外） + 「その他」
+function buildCategoryOptionList() {
+  const custom = state.branchCategoryOptions.filter((c) => !FIXED_CATEGORIES.includes(c));
+  return [...FIXED_CATEGORIES, ...custom, OTHER_CATEGORY];
+}
+
 function populateCategorySelect(selectEl) {
-  for (const category of CATEGORY_OPTIONS) {
+  // 作成フォーム側は静的な「未選択」(value="")オプションを持つため、それだけ残して他を入れ替える
+  for (const opt of [...selectEl.options]) {
+    if (opt.value !== '') selectEl.removeChild(opt);
+  }
+  for (const category of buildCategoryOptionList()) {
     const opt = document.createElement('option');
     opt.value = category;
     opt.textContent = category;
     selectEl.appendChild(opt);
+  }
+}
+
+async function refreshBranchOptions() {
+  if (!state.branch) {
+    state.branchPlaceOptions = [];
+    state.branchCategoryOptions = [];
+    updatePlaceDatalist();
+    populateCategorySelect(els.eventCategorySelect);
+    return;
+  }
+  try {
+    const [places, categories] = await Promise.all([
+      api.getBranchOptions(state.branch, 'place'),
+      api.getBranchOptions(state.branch, 'category'),
+    ]);
+    state.branchPlaceOptions = places.map((row) => row.value);
+    state.branchCategoryOptions = categories.map((row) => row.value);
+  } catch (err) {
+    console.error(err);
+    state.branchPlaceOptions = [];
+    state.branchCategoryOptions = [];
+  }
+  updatePlaceDatalist();
+  populateCategorySelect(els.eventCategorySelect);
+}
+
+function updatePlaceDatalist() {
+  els.eventPlaceOptions.innerHTML = '';
+  for (const value of state.branchPlaceOptions) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    els.eventPlaceOptions.appendChild(opt);
   }
 }
 
@@ -150,8 +196,7 @@ function bindStaticEvents() {
   els.branchSelect.addEventListener('change', async () => {
     state.branch = els.branchSelect.value;
     localStorage.setItem('aichi-schedule:branch', state.branch);
-    await refreshMonthDates();
-    await refreshEvents();
+    await Promise.all([refreshMonthDates(), refreshEvents(), refreshBranchOptions()]);
     subscribeRealtime();
   });
 
@@ -272,8 +317,7 @@ async function boot() {
   }
   renderCalendar();
   if (state.branch) {
-    await refreshMonthDates();
-    await refreshEvents();
+    await Promise.all([refreshMonthDates(), refreshEvents(), refreshBranchOptions()]);
     subscribeRealtime();
   } else {
     renderCurrentView();
@@ -745,6 +789,7 @@ function enterEditMode(event, card) {
   placeInput.type = 'text';
   placeInput.value = event.place;
   placeInput.placeholder = '場所';
+  placeInput.setAttribute('list', 'event-place-options');
 
   const contentInput = document.createElement('textarea');
   contentInput.value = event.content;
@@ -841,8 +886,7 @@ async function handleCreateEvent(event) {
     els.eventForm.classList.add('hidden');
     els.eventCategoryOtherWrap.classList.add('hidden');
     els.newEventToggleBtn.textContent = '＋ この日に予定を追加';
-    await refreshMonthDates();
-    await refreshEvents();
+    await Promise.all([refreshMonthDates(), refreshEvents(), refreshBranchOptions()]);
   } catch (err) {
     els.eventFormError.textContent = err.message;
   }
