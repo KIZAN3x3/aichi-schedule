@@ -596,6 +596,9 @@ function createEventCard(event) {
 
   const header = document.createElement('div');
   header.className = 'event-card-header';
+  if (event.category) {
+    header.appendChild(createCategoryBadge(event.category));
+  }
   const time = document.createElement('span');
   time.className = 'event-time';
   time.textContent = event.end_time
@@ -611,9 +614,6 @@ function createEventCard(event) {
     finishedBadge.className = 'finished-badge';
     finishedBadge.textContent = '終了済み';
     header.appendChild(finishedBadge);
-  }
-  if (event.category) {
-    header.appendChild(createCategoryBadge(event.category));
   }
   card.appendChild(header);
 
