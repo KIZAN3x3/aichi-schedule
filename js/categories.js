@@ -1,6 +1,5 @@
-// 固定カテゴリ16種＋「その他」（api/_lib/categories.js と値を一致させること）
+// 固定カテゴリ17種＋「その他」
 export const FIXED_CATEGORIES = [
-  '立上げ会議',
   '定例会',
   '勉強会',
   '駅立ち',
@@ -14,6 +13,8 @@ export const FIXED_CATEGORIES = [
   '街頭演説',
   'チラシ折り会',
   '報告会',
+  '支部面談',
+  'オンラインミーティング',
   'ウグイス講習会',
   'ドライバー講習会',
 ];
@@ -23,7 +24,6 @@ export const OTHER_CATEGORY = 'その他';
 export const CATEGORY_OPTIONS = [...FIXED_CATEGORIES, OTHER_CATEGORY];
 
 export const CATEGORY_COLORS = {
-  立上げ会議: '#f5871f',
   定例会: '#c98b1f',
   勉強会: '#8a5cc9',
   駅立ち: '#2f8f6b',
@@ -37,6 +37,8 @@ export const CATEGORY_COLORS = {
   街頭演説: '#d84315',
   チラシ折り会: '#5c7fb8',
   報告会: '#7a8c3f',
+  支部面談: '#a83fb0',
+  オンラインミーティング: '#4a9c3f',
   ウグイス講習会: '#a24fc9',
   ドライバー講習会: '#47738a',
 };

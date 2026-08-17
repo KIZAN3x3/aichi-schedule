@@ -804,9 +804,9 @@ function enterEditMode(event, card) {
   card.appendChild(timeInput);
   card.appendChild(endTimeInput);
   card.appendChild(placeInput);
-  card.appendChild(contentInput);
   card.appendChild(categorySelect);
   card.appendChild(categoryOtherInput);
+  card.appendChild(contentInput);
   card.appendChild(errorText);
   card.appendChild(actions);
 }
