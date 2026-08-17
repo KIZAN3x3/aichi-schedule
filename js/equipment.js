@@ -478,7 +478,12 @@ function createEquipmentTile(item) {
 
   if (item.image_url) {
     tile.classList.add('has-image');
-    tile.style.backgroundImage = `url("${item.image_url}")`;
+    const img = document.createElement('img');
+    img.className = 'equipment-tile-image';
+    img.src = item.image_url;
+    img.alt = item.item_name;
+    img.loading = 'lazy';
+    tile.appendChild(img);
   } else {
     const icon = document.createElement('span');
     icon.className = 'equipment-tile-icon';

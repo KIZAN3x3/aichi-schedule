@@ -13,5 +13,7 @@ module.exports = async (req, res) => {
     return sendJson(res, 500, { error: 'SUPABASE_URL / SUPABASE_ANON_KEY が設定されていません' });
   }
 
+  // デプロイごとに固定の値（環境変数）なので、ブラウザ・CDNで1時間使い回してよい
+  res.setHeader('Cache-Control', 'public, max-age=3600');
   return sendJson(res, 200, { supabaseUrl, supabaseAnonKey });
 };
