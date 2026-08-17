@@ -50,11 +50,16 @@ const els = {
   itemUpdatedBy: document.getElementById('item-updated-by'),
   viewTileBtn: document.getElementById('view-tile-btn'),
   viewSummaryBtn: document.getElementById('view-summary-btn'),
+  viewInventoryBtn: document.getElementById('view-inventory-btn'),
   equipmentFilterBanner: document.getElementById('equipment-filter-banner'),
   equipmentFilterLabel: document.getElementById('equipment-filter-label'),
   equipmentFilterClear: document.getElementById('equipment-filter-clear'),
   equipmentList: document.getElementById('equipment-list'),
   equipmentSummary: document.getElementById('equipment-summary'),
+  equipmentInventory: document.getElementById('equipment-inventory'),
+  inventoryDatetime: document.getElementById('inventory-datetime'),
+  inventoryCheckBtn: document.getElementById('inventory-check-btn'),
+  equipmentInventoryResult: document.getElementById('equipment-inventory-result'),
 };
 
 init();
@@ -112,10 +117,12 @@ function bindStaticEvents() {
 
   els.viewTileBtn.addEventListener('click', () => setViewMode('tile'));
   els.viewSummaryBtn.addEventListener('click', () => setViewMode('summary'));
+  els.viewInventoryBtn.addEventListener('click', () => setViewMode('inventory'));
   els.equipmentFilterClear.addEventListener('click', () => {
     state.summaryFilter = null;
     renderEquipmentList();
   });
+  els.inventoryCheckBtn.addEventListener('click', handleInventoryCheck);
 }
 
 function handleImageFileSelected(file) {
@@ -248,12 +255,15 @@ function applyViewMode(mode) {
   els.viewTileBtn.setAttribute('aria-selected', String(mode === 'tile'));
   els.viewSummaryBtn.classList.toggle('is-active', mode === 'summary');
   els.viewSummaryBtn.setAttribute('aria-selected', String(mode === 'summary'));
+  els.viewInventoryBtn.classList.toggle('is-active', mode === 'inventory');
+  els.viewInventoryBtn.setAttribute('aria-selected', String(mode === 'inventory'));
   els.equipmentList.classList.toggle('hidden', mode !== 'tile');
   els.equipmentSummary.classList.toggle('hidden', mode !== 'summary');
+  els.equipmentInventory.classList.toggle('hidden', mode !== 'inventory');
 
   if (mode === 'tile') {
     renderEquipmentList();
-  } else {
+  } else if (mode === 'summary') {
     renderSummaryList();
   }
 }
@@ -351,6 +361,99 @@ function renderSummaryList() {
     });
 
     els.equipmentSummary.appendChild(row);
+  }
+}
+
+// 指定日時以前でequipment_idごとに一番新しいequipment_historyレコードを取得し、
+// その時点で各備品がどこにあったかを種類別に集計する
+async function handleInventoryCheck() {
+  const value = els.inventoryDatetime.value;
+  els.equipmentInventoryResult.innerHTML = '';
+
+  if (!value) {
+    els.equipmentInventoryResult.appendChild(hintEl('日時を選択してください'));
+    return;
+  }
+
+  const cutoffIso = new Date(value).toISOString();
+  els.inventoryCheckBtn.disabled = true;
+  els.equipmentInventoryResult.appendChild(hintEl('確認中…'));
+
+  try {
+    const { data, error } = await state.supabase
+      .from('equipment_history')
+      .select('equipment_id, location, moved_at')
+      .lte('moved_at', cutoffIso)
+      .order('moved_at', { ascending: false });
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    // moved_at降順で取得しているので、equipment_idごとに最初に出てきたものが
+    // 「指定日時以前で最新」のレコードになる
+    const latestLocationByEquipment = new Map();
+    for (const row of data) {
+      if (!latestLocationByEquipment.has(row.equipment_id)) {
+        latestLocationByEquipment.set(row.equipment_id, row.location);
+      }
+    }
+
+    const itemsById = new Map(state.items.map((item) => [item.id, item]));
+    const groups = new Map();
+    for (const [equipmentId, location] of latestLocationByEquipment) {
+      const item = itemsById.get(equipmentId);
+      if (!item) continue; // 削除済みの備品は対象外
+
+      if (!groups.has(item.item_name)) {
+        groups.set(item.item_name, { count: 0, locations: new Map() });
+      }
+      const group = groups.get(item.item_name);
+      group.count += 1;
+      group.locations.set(location, (group.locations.get(location) || 0) + 1);
+    }
+
+    renderInventoryResult(groups);
+  } catch (err) {
+    els.equipmentInventoryResult.innerHTML = '';
+    els.equipmentInventoryResult.appendChild(hintEl(`取得に失敗しました: ${err.message}`));
+  } finally {
+    els.inventoryCheckBtn.disabled = false;
+  }
+}
+
+function renderInventoryResult(groups) {
+  els.equipmentInventoryResult.innerHTML = '';
+
+  if (groups.size === 0) {
+    els.equipmentInventoryResult.appendChild(hintEl('この時点のデータはありません'));
+    return;
+  }
+
+  const sortedNames = [...groups.keys()].sort((a, b) => a.localeCompare(b, 'ja'));
+  for (const itemName of sortedNames) {
+    const group = groups.get(itemName);
+
+    const row = document.createElement('div');
+    row.className = 'equipment-summary-row is-static';
+
+    const name = document.createElement('span');
+    name.className = 'equipment-summary-name';
+    name.textContent = itemName;
+    row.appendChild(name);
+
+    const count = document.createElement('span');
+    count.className = 'equipment-summary-count';
+    count.textContent = `合計 ${group.count}個`;
+    row.appendChild(count);
+
+    const breakdown = document.createElement('span');
+    breakdown.className = 'equipment-summary-breakdown';
+    breakdown.textContent = [...group.locations.entries()]
+      .map(([location, locationCount]) => `${location}: ${locationCount}個`)
+      .join(' / ');
+    row.appendChild(breakdown);
+
+    els.equipmentInventoryResult.appendChild(row);
   }
 }
 

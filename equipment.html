@@ -88,6 +88,7 @@
       <div class="view-toggle" role="tablist">
         <button type="button" id="view-tile-btn" class="view-toggle-btn is-active" role="tab" aria-selected="true">一覧</button>
         <button type="button" id="view-summary-btn" class="view-toggle-btn" role="tab" aria-selected="false">種類別</button>
+        <button type="button" id="view-inventory-btn" class="view-toggle-btn" role="tab" aria-selected="false">在庫確認</button>
       </div>
 
       <div id="equipment-filter-banner" class="equipment-filter-banner hidden">
@@ -97,6 +98,13 @@
 
       <div id="equipment-list" class="equipment-grid"></div>
       <div id="equipment-summary" class="equipment-summary-list hidden"></div>
+      <div id="equipment-inventory" class="equipment-inventory hidden">
+        <div class="equipment-inventory-form">
+          <input type="datetime-local" id="inventory-datetime" />
+          <button type="button" id="inventory-check-btn" class="btn btn-primary btn-small">確認する</button>
+        </div>
+        <div id="equipment-inventory-result" class="equipment-summary-list"></div>
+      </div>
     </section>
   </main>
 </div>

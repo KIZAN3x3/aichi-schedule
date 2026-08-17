@@ -783,6 +783,31 @@ body {
   color: var(--text-muted);
 }
 
+.equipment-summary-row.is-static {
+  cursor: default;
+}
+
+.equipment-inventory {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.equipment-inventory-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.equipment-inventory-form input[type="datetime-local"] {
+  flex: 1;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 15px;
+  font-family: inherit;
+}
+
 .equipment-tile {
   position: relative;
   aspect-ratio: 1 / 1;
