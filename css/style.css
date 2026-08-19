@@ -529,6 +529,52 @@ body {
   gap: 12px;
 }
 
+.my-events-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.my-event-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.my-event-row.is-finished {
+  opacity: 0.7;
+  background: #faf7f2;
+}
+
+.my-event-row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.my-event-row-datetime {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: var(--orange-dark);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.my-event-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .event-card {
   border: 1px solid var(--border);
   border-radius: 10px;

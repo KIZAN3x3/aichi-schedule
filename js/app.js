@@ -22,6 +22,7 @@ import { loadHolidays, isHoliday } from './holidays.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般', admin: '管理者' };
+const MY_EVENTS_DISMISSED_KEY = 'aichi-schedule:myEventsDismissed';
 
 const state = {
   role: null,
@@ -33,6 +34,8 @@ const state = {
   eventDates: new Set(),
   eventCategoriesByDate: new Map(),
   events: [],
+  myEvents: [],
+  myEventsDismissed: new Set(),
   viewMode: 'list',
   supabase: null,
   realtimeChannel: null,
@@ -64,8 +67,10 @@ const els = {
   selectedDateLabel: document.getElementById('selected-date-label'),
   viewListBtn: document.getElementById('view-list-btn'),
   viewTimelineBtn: document.getElementById('view-timeline-btn'),
+  viewMineBtn: document.getElementById('view-mine-btn'),
   eventList: document.getElementById('event-list'),
   timelineView: document.getElementById('timeline-view'),
+  myEventsView: document.getElementById('my-events-view'),
   newEventToggleBtn: document.getElementById('new-event-toggle-btn'),
   eventForm: document.getElementById('event-form'),
   eventFormError: document.getElementById('event-form-error'),
@@ -222,6 +227,7 @@ function bindStaticEvents() {
 
   els.viewListBtn.addEventListener('click', () => setViewMode('list'));
   els.viewTimelineBtn.addEventListener('click', () => setViewMode('timeline'));
+  els.viewMineBtn.addEventListener('click', () => setViewMode('mine'));
 }
 
 function saveNameEdit() {
@@ -230,7 +236,11 @@ function saveNameEdit() {
   updateNameDisplay();
   els.nameEditWrap.classList.add('hidden');
   els.nameDisplayBtn.classList.remove('hidden');
-  renderCurrentView();
+  if (state.viewMode === 'mine') {
+    refreshMyEvents();
+  } else {
+    renderCurrentView();
+  }
 }
 
 function updateNameDisplay() {
@@ -240,11 +250,21 @@ function updateNameDisplay() {
 function setViewMode(mode) {
   if (state.viewMode === mode) return;
   state.viewMode = mode;
-  els.viewListBtn.classList.toggle('is-active', mode === 'list');
-  els.viewListBtn.setAttribute('aria-selected', String(mode === 'list'));
-  els.viewTimelineBtn.classList.toggle('is-active', mode === 'timeline');
-  els.viewTimelineBtn.setAttribute('aria-selected', String(mode === 'timeline'));
-  renderCurrentView();
+  updateViewToggleUI();
+  if (mode === 'mine') {
+    refreshMyEvents();
+  } else {
+    renderCurrentView();
+  }
+}
+
+function updateViewToggleUI() {
+  els.viewListBtn.classList.toggle('is-active', state.viewMode === 'list');
+  els.viewListBtn.setAttribute('aria-selected', String(state.viewMode === 'list'));
+  els.viewTimelineBtn.classList.toggle('is-active', state.viewMode === 'timeline');
+  els.viewTimelineBtn.setAttribute('aria-selected', String(state.viewMode === 'timeline'));
+  els.viewMineBtn.classList.toggle('is-active', state.viewMode === 'mine');
+  els.viewMineBtn.setAttribute('aria-selected', String(state.viewMode === 'mine'));
 }
 
 function restoreSession() {
@@ -257,6 +277,8 @@ function restoreSession() {
     state.branch = savedBranch;
     els.branchSelect.value = savedBranch;
   }
+
+  state.myEventsDismissed = loadDismissedMyEvents();
 
   const savedPassword = localStorage.getItem('aichi-schedule:password');
   const savedRole = localStorage.getItem('aichi-schedule:role');
@@ -389,9 +411,66 @@ async function refreshEvents() {
 }
 
 function renderLoadingState() {
-  const target = state.viewMode === 'timeline' ? els.timelineView : els.eventList;
+  const target =
+    state.viewMode === 'timeline'
+      ? els.timelineView
+      : state.viewMode === 'mine'
+        ? els.myEventsView
+        : els.eventList;
   target.innerHTML = '';
   target.appendChild(hintEl('読み込み中…'));
+}
+
+async function refreshCurrentEvents() {
+  if (state.viewMode === 'mine') {
+    await refreshMyEvents();
+  } else {
+    await refreshEvents();
+  }
+}
+
+async function refreshMyEvents() {
+  if (!state.myName || !state.supabase) {
+    state.myEvents = [];
+    renderCurrentView();
+    return;
+  }
+  renderLoadingState();
+
+  const { data: rows, error } = await state.supabase
+    .from('participants')
+    .select('event_id')
+    .eq('participant_name', state.myName);
+
+  if (error) {
+    console.error(error);
+    state.myEvents = [];
+    renderCurrentView('参加予定の取得に失敗しました');
+    return;
+  }
+
+  const eventIds = [...new Set(rows.map((row) => row.event_id))];
+  if (eventIds.length === 0) {
+    state.myEvents = [];
+    renderCurrentView();
+    return;
+  }
+
+  const { data, error: eventsError } = await state.supabase
+    .from('events')
+    .select('*, participants(*)')
+    .in('id', eventIds)
+    .order('date', { ascending: true })
+    .order('time', { ascending: true });
+
+  if (eventsError) {
+    console.error(eventsError);
+    state.myEvents = [];
+    renderCurrentView('参加予定の取得に失敗しました');
+    return;
+  }
+  state.myEvents = data;
+  renderCurrentView();
 }
 
 function subscribeRealtime() {
@@ -415,6 +494,9 @@ function subscribeRealtime() {
       const eventId = payload.new?.event_id || payload.old?.event_id;
       if (state.events.some((e) => e.id === eventId)) {
         refreshEvents();
+      }
+      if (state.viewMode === 'mine') {
+        refreshMyEvents();
       }
     })
     .subscribe();
@@ -511,15 +593,158 @@ function selectDate(dateStr) {
 }
 
 function renderCurrentView(errorMessage) {
-  els.selectedDateLabel.textContent = formatDateLabel(state.selectedDate);
+  els.selectedDateLabel.textContent =
+    state.viewMode === 'mine' ? '参加予定のイベント' : formatDateLabel(state.selectedDate);
   els.eventList.classList.toggle('hidden', state.viewMode !== 'list');
   els.timelineView.classList.toggle('hidden', state.viewMode !== 'timeline');
+  els.myEventsView.classList.toggle('hidden', state.viewMode !== 'mine');
+  els.newEventToggleBtn.classList.toggle('hidden', state.viewMode === 'mine');
 
   if (state.viewMode === 'timeline') {
     renderTimelineBody(errorMessage);
+  } else if (state.viewMode === 'mine') {
+    renderMyEventsBody(errorMessage);
   } else {
     renderListBody(errorMessage);
   }
+}
+
+function loadDismissedMyEvents() {
+  try {
+    const raw = localStorage.getItem(MY_EVENTS_DISMISSED_KEY);
+    const ids = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(ids) ? ids : []);
+  } catch (err) {
+    console.error(err);
+    return new Set();
+  }
+}
+
+function saveDismissedMyEvents() {
+  localStorage.setItem(MY_EVENTS_DISMISSED_KEY, JSON.stringify([...state.myEventsDismissed]));
+}
+
+function renderMyEventsBody(errorMessage) {
+  els.myEventsView.innerHTML = '';
+
+  if (!state.myName) {
+    els.myEventsView.appendChild(hintEl('先に画面上部で表示名を入力してください'));
+    return;
+  }
+  if (errorMessage) {
+    els.myEventsView.appendChild(hintEl(errorMessage));
+    return;
+  }
+  const visibleEvents = state.myEvents.filter((event) => !state.myEventsDismissed.has(event.id));
+  if (visibleEvents.length === 0) {
+    els.myEventsView.appendChild(hintEl('参加予定のイベントはありません'));
+    return;
+  }
+
+  for (const event of visibleEvents) {
+    els.myEventsView.appendChild(createMyEventRow(event));
+  }
+}
+
+function formatMyEventDateTime(event) {
+  const [y, m, d] = event.date.split('-').map(Number);
+  const weekday = WEEKDAY_LABELS[new Date(y, m - 1, d).getDay()];
+  return `${m}/${d} (${weekday}) ${event.time.slice(0, 5)}〜`;
+}
+
+function createMyEventRow(event) {
+  const row = document.createElement('div');
+  row.className = 'my-event-row';
+  if (event.finished_at) row.classList.add('is-finished');
+  row.addEventListener('click', () => navigateToMyEvent(event));
+
+  const info = document.createElement('div');
+  info.className = 'my-event-row-info';
+
+  const dateTime = document.createElement('span');
+  dateTime.className = 'my-event-row-datetime';
+  dateTime.textContent = formatMyEventDateTime(event);
+  info.appendChild(dateTime);
+
+  const name = document.createElement('span');
+  name.className = 'my-event-row-name';
+  name.textContent = event.content;
+  info.appendChild(name);
+
+  if (event.finished_at) {
+    const badge = document.createElement('span');
+    badge.className = 'finished-badge';
+    badge.textContent = '終了済み';
+    info.appendChild(badge);
+  }
+
+  const leaveBtn = document.createElement('button');
+  leaveBtn.type = 'button';
+  leaveBtn.className = 'btn btn-muted btn-small';
+  leaveBtn.textContent = '参加を取り消す';
+  leaveBtn.addEventListener('click', async (clickEvent) => {
+    clickEvent.stopPropagation();
+    if (!confirm('参加を取り消しますか？')) return;
+    leaveBtn.disabled = true;
+    try {
+      await api.leaveEvent({
+        event_id: event.id,
+        participant_name: state.myName,
+        password: state.password,
+      });
+      await refreshMyEvents();
+    } catch (err) {
+      alert(err.message);
+      leaveBtn.disabled = false;
+    }
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.type = 'button';
+  dismissBtn.className = 'btn btn-outline btn-small';
+  dismissBtn.textContent = '削除';
+  dismissBtn.addEventListener('click', (clickEvent) => {
+    clickEvent.stopPropagation();
+    if (!confirm('この予定を一覧から消しますか？（参加記録は残ります）')) return;
+    state.myEventsDismissed.add(event.id);
+    saveDismissedMyEvents();
+    renderMyEventsBody();
+  });
+
+  row.appendChild(info);
+  row.appendChild(leaveBtn);
+  row.appendChild(dismissBtn);
+  return row;
+}
+
+async function navigateToMyEvent(event) {
+  if (state.branch !== event.branch) {
+    state.branch = event.branch;
+    els.branchSelect.value = event.branch;
+    localStorage.setItem('aichi-schedule:branch', state.branch);
+  }
+  state.selectedDate = event.date;
+  state.viewMode = 'list';
+  updateViewToggleUI();
+
+  const [y, m, d] = event.date.split('-').map(Number);
+  state.calendarMonth = startOfMonth(new Date(y, m - 1, d));
+  renderCalendar();
+
+  await Promise.all([refreshMonthDates(), refreshEvents(), refreshBranchOptions()]);
+  subscribeRealtime();
+
+  scrollToEventCard(event.id);
+}
+
+function scrollToEventCard(eventId) {
+  requestAnimationFrame(() => {
+    const cardEl = els.eventList.querySelector(`[data-event-id="${eventId}"]`);
+    if (!cardEl) return;
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    cardEl.classList.add('event-card-highlight');
+    setTimeout(() => cardEl.classList.remove('event-card-highlight'), 1500);
+  });
 }
 
 function renderListBody(errorMessage) {
@@ -564,19 +789,9 @@ function renderTimelineBody(errorMessage) {
 
 function handleTimelineBlockClick(eventId) {
   state.viewMode = 'list';
-  els.viewListBtn.classList.add('is-active');
-  els.viewListBtn.setAttribute('aria-selected', 'true');
-  els.viewTimelineBtn.classList.remove('is-active');
-  els.viewTimelineBtn.setAttribute('aria-selected', 'false');
+  updateViewToggleUI();
   renderCurrentView();
-
-  requestAnimationFrame(() => {
-    const cardEl = els.eventList.querySelector(`[data-event-id="${eventId}"]`);
-    if (!cardEl) return;
-    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    cardEl.classList.add('event-card-highlight');
-    setTimeout(() => cardEl.classList.remove('event-card-highlight'), 1500);
-  });
+  scrollToEventCard(eventId);
 }
 
 function hintEl(text) {
@@ -662,23 +877,32 @@ function createParticipantsSection(event) {
 
   const joinBtn = document.createElement('button');
   joinBtn.type = 'button';
-  joinBtn.className = 'btn btn-outline btn-small';
   const alreadyJoined = event.participants.some((p) => p.participant_name === state.myName);
-  joinBtn.textContent = alreadyJoined ? '参加済み' : '参加する';
-  joinBtn.disabled = alreadyJoined;
+  joinBtn.className = alreadyJoined ? 'btn btn-muted btn-small' : 'btn btn-outline btn-small';
+  joinBtn.textContent = alreadyJoined ? '参加を取り消す' : '参加する';
   joinBtn.addEventListener('click', async () => {
     if (!state.myName) {
       alert('先に画面上部で表示名を入力してください');
       return;
     }
+    if (alreadyJoined && !confirm('参加を取り消しますか？')) return;
+
     joinBtn.disabled = true;
     try {
-      await api.joinEvent({
-        event_id: event.id,
-        participant_name: state.myName,
-        password: state.password,
-      });
-      await refreshEvents();
+      if (alreadyJoined) {
+        await api.leaveEvent({
+          event_id: event.id,
+          participant_name: state.myName,
+          password: state.password,
+        });
+      } else {
+        await api.joinEvent({
+          event_id: event.id,
+          participant_name: state.myName,
+          password: state.password,
+        });
+      }
+      await refreshCurrentEvents();
     } catch (err) {
       alert(err.message);
       joinBtn.disabled = false;
@@ -722,7 +946,7 @@ function createActionsRow(event, card) {
           poster_name: event.poster_name,
           password: state.password,
         });
-        await refreshEvents();
+        await refreshCurrentEvents();
       } catch (err) {
         alert(err.message);
         finishBtn.disabled = false;
@@ -742,7 +966,7 @@ function createActionsRow(event, card) {
           poster_name: event.poster_name,
           password: state.password,
         });
-        await refreshEvents();
+        await refreshCurrentEvents();
       } catch (err) {
         alert(err.message);
         reopenBtn.disabled = false;
@@ -764,7 +988,7 @@ function createActionsRow(event, card) {
           password: state.password,
         });
         await refreshMonthDates();
-        await refreshEvents();
+        await refreshCurrentEvents();
       } catch (err) {
         alert(err.message);
       }
@@ -831,7 +1055,7 @@ function enterEditMode(event, card) {
         poster_name: event.poster_name,
         password: state.password,
       });
-      await refreshEvents();
+      await refreshCurrentEvents();
     } catch (err) {
       errorText.textContent = err.message;
     }
