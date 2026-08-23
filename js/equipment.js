@@ -521,6 +521,20 @@ function renderDetailBody(item, detail) {
   detail.innerHTML = '';
   detail.classList.remove('equipment-card-editing');
 
+  if (item.image_url) {
+    const img = document.createElement('img');
+    img.className = 'equipment-detail-image';
+    img.src = item.image_url;
+    img.alt = item.item_name;
+    img.loading = 'lazy';
+    detail.appendChild(img);
+  } else {
+    const icon = document.createElement('span');
+    icon.className = 'equipment-detail-icon';
+    icon.textContent = '📦';
+    detail.appendChild(icon);
+  }
+
   if (item.management_number) {
     const number = document.createElement('p');
     number.className = 'equipment-management-number';
