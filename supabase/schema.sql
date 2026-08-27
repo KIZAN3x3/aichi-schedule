@@ -79,12 +79,23 @@ create table if not exists public.equipment (
   location           text not null,
   image_url          text,
   memo               text,
+  owner_branch       text check (
+                       owner_branch is null or owner_branch in (
+                         '西県連','東県連',
+                         '1支部','2支部','3支部','4支部','5支部','6支部','7支部','8支部',
+                         '9支部','10支部','11支部','12支部','13支部','14支部','15支部','16支部',
+                         'その他'
+                       )
+                     ),
+  owner_person       text,
   updated_by         text not null,
   updated_at         timestamptz not null default now()
 );
 
 comment on table public.equipment is '全体共通の備品リスト（支部を跨いで共有）';
 comment on column public.equipment.image_url is 'Supabase Storageに保存した画像のURL';
+comment on column public.equipment.owner_branch is '所有（支部）。西県連/東県連/1支部〜16支部/その他の19択、未定ならnull';
+comment on column public.equipment.owner_person is '担当者名（任意入力、未定ならnull）';
 
 create index if not exists idx_equipment_item_name on public.equipment (item_name);
 

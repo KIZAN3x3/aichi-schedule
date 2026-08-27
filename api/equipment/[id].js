@@ -9,7 +9,7 @@ module.exports = async (req, res) => {
   const supabase = getSupabaseClient();
 
   if (req.method === 'PUT') {
-    const { item_name, management_number, location, image_url, memo, updated_by, password } = req.body || {};
+    const { item_name, management_number, location, image_url, memo, owner_branch, owner_person, updated_by, password } = req.body || {};
     const role = resolveRole(password);
     if (!role) {
       return sendJson(res, 401, { error: 'パスワードが違います' });
@@ -33,6 +33,8 @@ module.exports = async (req, res) => {
     if (location !== undefined) updates.location = location;
     if (image_url !== undefined) updates.image_url = image_url;
     if (memo !== undefined) updates.memo = memo;
+    if (owner_branch !== undefined) updates.owner_branch = owner_branch || null;
+    if (owner_person !== undefined) updates.owner_person = owner_person || null;
 
     const { data, error } = await supabase
       .from('equipment')

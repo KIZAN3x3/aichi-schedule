@@ -8,7 +8,7 @@ module.exports = async (req, res) => {
     return methodNotAllowed(res, ['POST']);
   }
 
-  const { item_name, management_number, location, image_url, memo, updated_by, password } = req.body || {};
+  const { item_name, management_number, location, image_url, memo, owner_branch, owner_person, updated_by, password } = req.body || {};
   const role = resolveRole(password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
@@ -29,6 +29,8 @@ module.exports = async (req, res) => {
       location,
       image_url: image_url || null,
       memo: memo || null,
+      owner_branch: owner_branch || null,
+      owner_person: owner_person || null,
       updated_by,
     })
     .select()

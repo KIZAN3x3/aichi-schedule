@@ -1,5 +1,6 @@
 import { getSupabaseClient } from './supabase-client.js';
 import { api } from './api.js';
+import { OWNER_BRANCH_OPTIONS } from './owner-branches.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
@@ -18,6 +19,7 @@ const state = {
   realtimeChannel: null,
   viewMode: 'tile',
   summaryFilter: null,
+  ownerFilter: '',
   selectedImageFile: null,
 };
 
@@ -43,6 +45,8 @@ const els = {
   itemName: document.getElementById('item-name'),
   itemManagementNumber: document.getElementById('item-management-number'),
   itemLocation: document.getElementById('item-location'),
+  itemOwnerBranch: document.getElementById('item-owner-branch'),
+  itemOwnerPerson: document.getElementById('item-owner-person'),
   itemImage: document.getElementById('item-image'),
   itemImageCameraBtn: document.getElementById('item-image-camera-btn'),
   itemImageCamera: document.getElementById('item-image-camera'),
@@ -52,6 +56,8 @@ const els = {
   viewTileBtn: document.getElementById('view-tile-btn'),
   viewSummaryBtn: document.getElementById('view-summary-btn'),
   viewInventoryBtn: document.getElementById('view-inventory-btn'),
+  equipmentOwnerFilterWrap: document.getElementById('equipment-owner-filter-wrap'),
+  equipmentOwnerFilter: document.getElementById('equipment-owner-filter'),
   equipmentFilterBanner: document.getElementById('equipment-filter-banner'),
   equipmentFilterLabel: document.getElementById('equipment-filter-label'),
   equipmentFilterClear: document.getElementById('equipment-filter-clear'),
@@ -66,8 +72,27 @@ const els = {
 init();
 
 function init() {
+  populateOwnerBranchSelect(els.itemOwnerBranch, { includeBlank: true, blankLabel: '未定' });
+  populateOwnerBranchSelect(els.equipmentOwnerFilter, { includeBlank: true, blankLabel: 'すべて' });
   bindStaticEvents();
   restoreSession();
+}
+
+// 所有プルダウン共通: 先頭に空選択肢、続けて西県連→東県連→1〜16支部→その他の固定19択
+function populateOwnerBranchSelect(selectEl, { includeBlank, blankLabel } = {}) {
+  selectEl.innerHTML = '';
+  if (includeBlank) {
+    const blankOption = document.createElement('option');
+    blankOption.value = '';
+    blankOption.textContent = blankLabel || '';
+    selectEl.appendChild(blankOption);
+  }
+  for (const branch of OWNER_BRANCH_OPTIONS) {
+    const option = document.createElement('option');
+    option.value = branch;
+    option.textContent = branch;
+    selectEl.appendChild(option);
+  }
 }
 
 function bindStaticEvents() {
@@ -121,6 +146,10 @@ function bindStaticEvents() {
   els.viewInventoryBtn.addEventListener('click', () => setViewMode('inventory'));
   els.equipmentFilterClear.addEventListener('click', () => {
     state.summaryFilter = null;
+    renderEquipmentList();
+  });
+  els.equipmentOwnerFilter.addEventListener('change', () => {
+    state.ownerFilter = els.equipmentOwnerFilter.value;
     renderEquipmentList();
   });
   els.inventoryCheckBtn.addEventListener('click', handleInventoryCheck);
@@ -262,6 +291,7 @@ function applyViewMode(mode) {
   els.equipmentList.classList.toggle('hidden', mode !== 'tile');
   els.equipmentSummary.classList.toggle('hidden', mode !== 'summary');
   els.equipmentInventory.classList.toggle('hidden', mode !== 'inventory');
+  els.equipmentOwnerFilterWrap.classList.toggle('hidden', mode !== 'tile');
 
   if (mode === 'tile') {
     renderEquipmentList();
@@ -298,13 +328,13 @@ function renderEquipmentList() {
     els.equipmentFilterLabel.textContent = `「${state.summaryFilter}」で絞り込み中`;
   }
 
-  const items = state.summaryFilter
-    ? state.items.filter((item) => item.item_name === state.summaryFilter)
-    : state.items;
+  const items = state.items
+    .filter((item) => !state.summaryFilter || item.item_name === state.summaryFilter)
+    .filter((item) => !state.ownerFilter || item.owner_branch === state.ownerFilter);
 
   if (items.length === 0) {
     els.equipmentList.appendChild(
-      hintEl(state.summaryFilter ? '該当する備品はありません' : '登録されている備品はありません')
+      hintEl(state.summaryFilter || state.ownerFilter ? '該当する備品はありません' : '登録されている備品はありません')
     );
     return;
   }
@@ -328,11 +358,13 @@ function renderSummaryList() {
   const groups = new Map();
   for (const item of state.items) {
     if (!groups.has(item.item_name)) {
-      groups.set(item.item_name, { count: 0, locations: new Map() });
+      groups.set(item.item_name, { count: 0, locations: new Map(), owners: new Map() });
     }
     const group = groups.get(item.item_name);
     group.count += 1;
     group.locations.set(item.location, (group.locations.get(item.location) || 0) + 1);
+    const ownerLabel = item.owner_branch || '未定';
+    group.owners.set(ownerLabel, (group.owners.get(ownerLabel) || 0) + 1);
   }
 
   for (const [itemName, group] of groups) {
@@ -350,12 +382,19 @@ function renderSummaryList() {
     count.textContent = `合計 ${group.count}個`;
     row.appendChild(count);
 
-    const breakdown = document.createElement('span');
-    breakdown.className = 'equipment-summary-breakdown';
-    breakdown.textContent = [...group.locations.entries()]
+    const locationBreakdown = document.createElement('span');
+    locationBreakdown.className = 'equipment-summary-breakdown';
+    locationBreakdown.textContent = `場所内訳: ${[...group.locations.entries()]
       .map(([location, locationCount]) => `${location}: ${locationCount}個`)
-      .join(' / ');
-    row.appendChild(breakdown);
+      .join(' / ')}`;
+    row.appendChild(locationBreakdown);
+
+    const ownerBreakdown = document.createElement('span');
+    ownerBreakdown.className = 'equipment-summary-breakdown';
+    ownerBreakdown.textContent = `所有内訳: ${[...group.owners.entries()]
+      .map(([owner, ownerCount]) => `${owner}: ${ownerCount}個`)
+      .join(' / ')}`;
+    row.appendChild(ownerBreakdown);
 
     row.addEventListener('click', () => {
       state.summaryFilter = itemName;
@@ -505,6 +544,13 @@ function createEquipmentTile(item) {
     tile.appendChild(number);
   }
 
+  if (item.owner_branch) {
+    const owner = document.createElement('span');
+    owner.className = 'equipment-tile-owner';
+    owner.textContent = item.owner_branch;
+    tile.appendChild(owner);
+  }
+
   const detail = document.createElement('div');
   detail.className = 'equipment-detail hidden';
   renderDetailBody(item, detail);
@@ -546,6 +592,11 @@ function renderDetailBody(item, detail) {
   location.className = 'equipment-location';
   location.textContent = `保管場所: ${item.location}`;
   detail.appendChild(location);
+
+  const owner = document.createElement('p');
+  owner.className = 'equipment-owner';
+  owner.textContent = `所有：${item.owner_branch || '未定'}（担当：${item.owner_person || '×'}）`;
+  detail.appendChild(owner);
 
   if (item.memo) {
     const memo = document.createElement('p');
@@ -671,6 +722,15 @@ function enterEditMode(item, detail) {
   locationInput.value = item.location;
   locationInput.placeholder = '保管場所';
 
+  const ownerBranchSelect = document.createElement('select');
+  populateOwnerBranchSelect(ownerBranchSelect, { includeBlank: true, blankLabel: '未定' });
+  ownerBranchSelect.value = item.owner_branch || '';
+
+  const ownerPersonInput = document.createElement('input');
+  ownerPersonInput.type = 'text';
+  ownerPersonInput.value = item.owner_person || '';
+  ownerPersonInput.placeholder = '担当者名（任意）';
+
   let editSelectedImageFile = null;
 
   const imagePreview = document.createElement('img');
@@ -744,6 +804,8 @@ function enterEditMode(item, detail) {
         management_number: managementNumberInput.value.trim(),
         location: locationInput.value.trim(),
         memo: memoInput.value.trim(),
+        owner_branch: ownerBranchSelect.value,
+        owner_person: ownerPersonInput.value.trim(),
         updated_by: updatedBy,
         password: state.password,
       };
@@ -779,6 +841,8 @@ function enterEditMode(item, detail) {
   detail.appendChild(nameInput);
   detail.appendChild(managementNumberInput);
   detail.appendChild(locationInput);
+  detail.appendChild(ownerBranchSelect);
+  detail.appendChild(ownerPersonInput);
   detail.appendChild(imagePreview);
   detail.appendChild(imageFileInput);
   detail.appendChild(imageCameraBtn);
@@ -887,6 +951,8 @@ async function handleCreateItem(event) {
       location: els.itemLocation.value.trim(),
       image_url: imageUrl,
       memo: els.itemMemo.value.trim(),
+      owner_branch: els.itemOwnerBranch.value,
+      owner_person: els.itemOwnerPerson.value.trim(),
       updated_by: updatedBy,
       password: state.password,
     });

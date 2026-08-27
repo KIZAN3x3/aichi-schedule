@@ -68,6 +68,14 @@
           <input type="text" id="item-location" placeholder="保管場所" required />
         </label>
         <label>
+          所有（任意）
+          <select id="item-owner-branch"></select>
+        </label>
+        <label>
+          担当者（任意）
+          <input type="text" id="item-owner-person" placeholder="担当者名" />
+        </label>
+        <label>
           画像（任意）
           <input type="file" id="item-image" accept="image/png,image/jpeg,image/webp,image/gif" />
         </label>
@@ -90,6 +98,11 @@
         <button type="button" id="view-tile-btn" class="view-toggle-btn is-active" role="tab" aria-selected="true">一覧</button>
         <button type="button" id="view-summary-btn" class="view-toggle-btn" role="tab" aria-selected="false">種類別</button>
         <button type="button" id="view-inventory-btn" class="view-toggle-btn" role="tab" aria-selected="false">在庫確認</button>
+      </div>
+
+      <div id="equipment-owner-filter-wrap" class="equipment-owner-filter-wrap">
+        <label for="equipment-owner-filter">所有で絞り込み</label>
+        <select id="equipment-owner-filter"></select>
       </div>
 
       <div id="equipment-filter-banner" class="equipment-filter-banner hidden">
