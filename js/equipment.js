@@ -486,7 +486,7 @@ function renderSummaryList() {
     const detailGroup = document.createElement('div');
     detailGroup.className = 'equipment-summary-detail-group hidden';
     for (const groupItem of group.items) {
-      detailGroup.appendChild(createDetailPanel(groupItem));
+      detailGroup.appendChild(createDetailPanel(groupItem, { hidden: false }));
     }
 
     setupExpandableRow(row, detailGroup);
@@ -610,7 +610,7 @@ function renderInventoryResult(groups) {
     const detailGroup = document.createElement('div');
     detailGroup.className = 'equipment-summary-detail-group hidden';
     for (const groupItem of group.items) {
-      detailGroup.appendChild(createDetailPanel(groupItem));
+      detailGroup.appendChild(createDetailPanel(groupItem, { hidden: false }));
     }
 
     setupExpandableRow(row, detailGroup);
@@ -708,11 +708,14 @@ function createEquipmentTile(item) {
   return { tile, detail };
 }
 
-// hidden状態のdetail要素を作ってrenderDetailBodyで中身を組み立てる。
-// 一覧タイル・種類別・在庫確認のどのビューからも同じ詳細パネルを使い回すための共通処理
-function createDetailPanel(item) {
+// detail要素を作ってrenderDetailBodyで中身を組み立てる。
+// 一覧タイル・種類別・在庫確認のどのビューからも同じ詳細パネルを使い回すための共通処理。
+// hidden:true(既定)は要素自身の開閉をタイル側で直接トグルする一覧タイル向け。
+// hidden:falseは種類別・在庫確認向け（複数件を並べて外側のdetailGroup側だけで開閉を制御するため、
+// 個々のdetail自身は最初から表示状態にしておく必要がある）
+function createDetailPanel(item, { hidden = true } = {}) {
   const detail = document.createElement('div');
-  detail.className = 'equipment-detail hidden';
+  detail.className = hidden ? 'equipment-detail hidden' : 'equipment-detail';
   renderDetailBody(item, detail);
   return detail;
 }
