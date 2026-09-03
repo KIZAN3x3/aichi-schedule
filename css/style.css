@@ -236,6 +236,26 @@ body {
   cursor: pointer;
 }
 
+.branch-options-btn {
+  align-self: flex-start;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 16px;
+  text-decoration: none;
+}
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 4px;
+  color: var(--orange-dark);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
 /* ページナビゲーション */
 .page-nav {
   display: flex;

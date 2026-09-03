@@ -58,7 +58,7 @@ const els = {
   nameEditWrap: document.getElementById('name-edit-wrap'),
   nameInput: document.getElementById('name-input'),
   branchSelect: document.getElementById('branch-select'),
-  pageNavBranchOptions: document.getElementById('page-nav-branch-options'),
+  branchOptionsBtn: document.getElementById('branch-options-btn'),
   calendarMonthLabel: document.getElementById('calendar-month-label'),
   prevMonthBtn: document.getElementById('prev-month-btn'),
   nextMonthBtn: document.getElementById('next-month-btn'),
@@ -328,7 +328,7 @@ function enterApp() {
   els.app.classList.remove('hidden');
   els.roleText.textContent = ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
-  els.pageNavBranchOptions.classList.toggle('hidden', state.role !== 'admin');
+  els.branchOptionsBtn.classList.toggle('hidden', state.role !== 'admin');
   boot();
 }
 
