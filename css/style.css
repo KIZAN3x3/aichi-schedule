@@ -1096,6 +1096,26 @@ body {
   color: var(--text-muted);
 }
 
+.equipment-quantity-adjuster {
+  margin: 2px 0 4px;
+}
+
+.equipment-quantity-adjuster-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.equipment-quantity-input {
+  width: 64px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-family: inherit;
+  font-size: 14px;
+  text-align: center;
+}
+
 .equipment-location {
   margin: 0;
   font-size: 15px;

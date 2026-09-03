@@ -139,8 +139,24 @@
       </div>
 
       <div id="equipment-list" class="equipment-grid"></div>
+
+      <div id="equipment-summary-countable-filter-wrap" class="equipment-owner-filter-wrap hidden">
+        <label for="equipment-summary-countable-filter">数量で絞り込み</label>
+        <select id="equipment-summary-countable-filter">
+          <option value="">すべて</option>
+          <option value="countable">数量変動ありのみ</option>
+        </select>
+      </div>
       <div id="equipment-summary" class="equipment-summary-list hidden"></div>
+
       <div id="equipment-inventory" class="equipment-inventory hidden">
+        <div id="equipment-inventory-countable-filter-wrap" class="equipment-owner-filter-wrap">
+          <label for="equipment-inventory-countable-filter">数量で絞り込み</label>
+          <select id="equipment-inventory-countable-filter">
+            <option value="">すべて</option>
+            <option value="countable">数量変動ありのみ</option>
+          </select>
+        </div>
         <div class="equipment-inventory-form">
           <input type="datetime-local" id="inventory-datetime" />
           <button type="button" id="inventory-check-btn" class="btn btn-primary btn-small">確認する</button>

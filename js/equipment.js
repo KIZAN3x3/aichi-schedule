@@ -9,6 +9,8 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION = 1600;
 const RESIZE_QUALITIES = [0.8, 0.6, 0.4];
 const BUCKET = 'equipment-images';
+// 数量その場変更が自分自身のRealtime echoを消化しそこねた場合の保険（この時間内に届かなければ諦める）
+const REALTIME_ECHO_TIMEOUT_MS = 5000;
 
 const state = {
   role: null,
@@ -22,7 +24,11 @@ const state = {
   ownerFilter: '',
   sharedFilter: '',
   countableFilter: '',
+  summaryCountableFilter: '',
+  inventoryCountableFilter: '',
   selectedImageFile: null,
+  pendingLocalQuantityUpdates: 0,
+  pendingRealtimeTimeouts: [],
 };
 
 const els = {
@@ -66,6 +72,9 @@ const els = {
   equipmentSharedFilter: document.getElementById('equipment-shared-filter'),
   equipmentCountableFilterWrap: document.getElementById('equipment-countable-filter-wrap'),
   equipmentCountableFilter: document.getElementById('equipment-countable-filter'),
+  equipmentSummaryCountableFilterWrap: document.getElementById('equipment-summary-countable-filter-wrap'),
+  equipmentSummaryCountableFilter: document.getElementById('equipment-summary-countable-filter'),
+  equipmentInventoryCountableFilter: document.getElementById('equipment-inventory-countable-filter'),
   equipmentFilterBanner: document.getElementById('equipment-filter-banner'),
   equipmentFilterLabel: document.getElementById('equipment-filter-label'),
   equipmentFilterClear: document.getElementById('equipment-filter-clear'),
@@ -180,6 +189,16 @@ function bindStaticEvents() {
   els.equipmentCountableFilter.addEventListener('change', () => {
     state.countableFilter = els.equipmentCountableFilter.value;
     renderEquipmentList();
+  });
+  els.equipmentSummaryCountableFilter.addEventListener('change', () => {
+    state.summaryCountableFilter = els.equipmentSummaryCountableFilter.value;
+    renderSummaryList();
+  });
+  els.equipmentInventoryCountableFilter.addEventListener('change', () => {
+    state.inventoryCountableFilter = els.equipmentInventoryCountableFilter.value;
+    if (els.inventoryDatetime.value) {
+      handleInventoryCheck();
+    }
   });
   els.inventoryCheckBtn.addEventListener('click', handleInventoryCheck);
 }
@@ -322,6 +341,7 @@ function applyViewMode(mode) {
   els.equipmentOwnerFilterWrap.classList.toggle('hidden', mode !== 'tile');
   els.equipmentSharedFilterWrap.classList.toggle('hidden', mode !== 'tile');
   els.equipmentCountableFilterWrap.classList.toggle('hidden', mode !== 'tile');
+  els.equipmentSummaryCountableFilterWrap.classList.toggle('hidden', mode !== 'summary');
 
   if (mode === 'tile') {
     renderEquipmentList();
@@ -338,6 +358,16 @@ function subscribeRealtime() {
   state.realtimeChannel = state.supabase
     .channel('equipment-list')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'equipment' }, () => {
+      // 数量その場変更が発生させた自分自身のechoは消化するだけでfetchItems()は呼ばない
+      // （呼ぶと一覧が作り直され、開いている詳細パネルが閉じてしまうため）
+      if (state.pendingLocalQuantityUpdates > 0) {
+        state.pendingLocalQuantityUpdates -= 1;
+        const timeoutId = state.pendingRealtimeTimeouts.shift();
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+        return;
+      }
       fetchItems();
     })
     .subscribe();
@@ -390,13 +420,19 @@ function renderEquipmentList() {
 function renderSummaryList() {
   els.equipmentSummary.innerHTML = '';
 
-  if (state.items.length === 0) {
-    els.equipmentSummary.appendChild(hintEl('登録されている備品はありません'));
+  const items = state.items.filter(
+    (item) => state.summaryCountableFilter !== 'countable' || item.is_countable
+  );
+
+  if (items.length === 0) {
+    els.equipmentSummary.appendChild(
+      hintEl(state.summaryCountableFilter ? '該当する備品はありません' : '登録されている備品はありません')
+    );
     return;
   }
 
   const groups = new Map();
-  for (const item of state.items) {
+  for (const item of items) {
     if (!groups.has(item.item_name)) {
       groups.set(item.item_name, { count: 0, locations: new Map(), owners: new Map() });
     }
@@ -484,6 +520,7 @@ async function handleInventoryCheck() {
     for (const [equipmentId, location] of latestLocationByEquipment) {
       const item = itemsById.get(equipmentId);
       if (!item) continue; // 削除済みの備品は対象外
+      if (state.inventoryCountableFilter === 'countable' && !item.is_countable) continue;
 
       if (!groups.has(item.item_name)) {
         groups.set(item.item_name, { count: 0, locations: new Map() });
@@ -658,6 +695,10 @@ function renderDetailBody(item, detail) {
   quantity.textContent = item.is_countable ? `数量: ${item.quantity} ・ 数量変動あり` : `数量: ${item.quantity}`;
   detail.appendChild(quantity);
 
+  if (item.is_countable) {
+    detail.appendChild(createQuantityAdjuster(item, detail));
+  }
+
   const location = document.createElement('p');
   location.className = 'equipment-location';
   location.textContent = `保管場所: ${item.location}`;
@@ -692,6 +733,148 @@ function renderDetailBody(item, detail) {
 
   detail.appendChild(createActionsRow(item, detail, historyPanel));
   detail.appendChild(historyPanel);
+}
+
+// タイル内の「×N」数量表示を差し替える。1以下では非表示、2以上で表示（要素がなければ作る）
+function updateTileQuantityDisplay(tile, quantity) {
+  let quantityEl = tile.querySelector('.equipment-tile-quantity');
+  if (quantity >= 2) {
+    if (!quantityEl) {
+      quantityEl = document.createElement('span');
+      quantityEl.className = 'equipment-tile-quantity';
+      // 生成順（品目名→管理番号→数量→所有→バッジ）に合わせ、
+      // 管理番号（無ければ品目名）の直後に挿入する
+      const precedingEl = tile.querySelector('.equipment-tile-number') || tile.querySelector('.equipment-tile-name');
+      tile.insertBefore(quantityEl, precedingEl ? precedingEl.nextSibling : tile.firstChild);
+    }
+    quantityEl.textContent = `×${quantity}`;
+  } else if (quantityEl) {
+    quantityEl.remove();
+  }
+}
+
+// is_countableな備品の詳細パネルに出す、その場で数量を変更するUI（編集モードには入らない）
+function createQuantityAdjuster(item, detail) {
+  const wrap = document.createElement('div');
+  wrap.className = 'equipment-quantity-adjuster';
+
+  const minusBtn = document.createElement('button');
+  minusBtn.type = 'button';
+  minusBtn.className = 'btn btn-outline btn-small';
+  minusBtn.textContent = '−';
+
+  const plusBtn = document.createElement('button');
+  plusBtn.type = 'button';
+  plusBtn.className = 'btn btn-outline btn-small';
+  plusBtn.textContent = '＋';
+
+  const quantityInput = document.createElement('input');
+  quantityInput.type = 'number';
+  quantityInput.min = '0';
+  quantityInput.step = '1';
+  quantityInput.value = String(item.quantity);
+  quantityInput.className = 'equipment-quantity-input';
+
+  const applyBtn = document.createElement('button');
+  applyBtn.type = 'button';
+  applyBtn.className = 'btn btn-primary btn-small';
+  applyBtn.textContent = '更新';
+
+  const errorText = document.createElement('p');
+  errorText.className = 'form-error';
+
+  const setBusy = (busy) => {
+    minusBtn.disabled = busy || item.quantity <= 0;
+    plusBtn.disabled = busy;
+    quantityInput.disabled = busy;
+    applyBtn.disabled = busy;
+  };
+
+  async function saveQuantity(newQuantity) {
+    if (!state.myName) {
+      errorText.textContent = 'お名前を設定してから変更してください';
+      return;
+    }
+    errorText.textContent = '';
+    setBusy(true);
+
+    // 自分自身の更新で発生するRealtime echoを後でsubscribeRealtime側が消化できるよう予約する。
+    // echoが届かなかった場合に備え、一定時間後に自動でカウンタを戻すタイマーも仕掛けておく
+    state.pendingLocalQuantityUpdates += 1;
+    const timeoutId = setTimeout(() => {
+      state.pendingLocalQuantityUpdates = Math.max(0, state.pendingLocalQuantityUpdates - 1);
+      const idx = state.pendingRealtimeTimeouts.indexOf(timeoutId);
+      if (idx !== -1) {
+        state.pendingRealtimeTimeouts.splice(idx, 1);
+      }
+    }, REALTIME_ECHO_TIMEOUT_MS);
+    state.pendingRealtimeTimeouts.push(timeoutId);
+
+    try {
+      await api.updateEquipment(item.id, {
+        quantity: newQuantity,
+        updated_by: state.myName,
+        password: state.password,
+      });
+
+      item.quantity = newQuantity;
+      quantityInput.value = String(item.quantity);
+
+      const quantityP = detail.querySelector('.equipment-quantity');
+      if (quantityP) {
+        quantityP.textContent = item.is_countable
+          ? `数量: ${item.quantity} ・ 数量変動あり`
+          : `数量: ${item.quantity}`;
+      }
+
+      const tile = detail.previousElementSibling;
+      if (tile) {
+        updateTileQuantityDisplay(tile, item.quantity);
+      }
+
+      setBusy(false);
+    } catch (err) {
+      // 更新自体が失敗した場合はDBが変わっておらずechoも来ないので、予約したタイマー/カウンタをその場で巻き戻す
+      clearTimeout(timeoutId);
+      const idx = state.pendingRealtimeTimeouts.indexOf(timeoutId);
+      if (idx !== -1) {
+        state.pendingRealtimeTimeouts.splice(idx, 1);
+      }
+      state.pendingLocalQuantityUpdates = Math.max(0, state.pendingLocalQuantityUpdates - 1);
+
+      errorText.textContent = err.message;
+      setBusy(false);
+    }
+  }
+
+  minusBtn.addEventListener('click', () => {
+    if (item.quantity <= 0) return;
+    saveQuantity(item.quantity - 1);
+  });
+  plusBtn.addEventListener('click', () => {
+    saveQuantity(item.quantity + 1);
+  });
+  applyBtn.addEventListener('click', () => {
+    const parsed = Number(quantityInput.value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      errorText.textContent = '0以上の数量を入力してください';
+      return;
+    }
+    saveQuantity(Math.round(parsed));
+  });
+
+  setBusy(false);
+
+  const row = document.createElement('div');
+  row.className = 'equipment-quantity-adjuster-row';
+  row.appendChild(minusBtn);
+  row.appendChild(plusBtn);
+  row.appendChild(quantityInput);
+  row.appendChild(applyBtn);
+
+  wrap.appendChild(row);
+  wrap.appendChild(errorText);
+  return wrap;
 }
 
 function createActionsRow(item, detail, historyPanel) {
