@@ -434,18 +434,18 @@ function renderSummaryList() {
   const groups = new Map();
   for (const item of items) {
     if (!groups.has(item.item_name)) {
-      groups.set(item.item_name, { count: 0, locations: new Map(), owners: new Map() });
+      groups.set(item.item_name, { count: 0, locations: new Map(), owners: new Map(), items: [] });
     }
     const group = groups.get(item.item_name);
     group.count += 1;
     group.locations.set(item.location, (group.locations.get(item.location) || 0) + 1);
     const ownerLabel = item.owner_branch || '未定';
     group.owners.set(ownerLabel, (group.owners.get(ownerLabel) || 0) + 1);
+    group.items.push(item);
   }
 
   for (const [itemName, group] of groups) {
-    const row = document.createElement('button');
-    row.type = 'button';
+    const row = document.createElement('div');
     row.className = 'equipment-summary-row';
 
     const name = document.createElement('span');
@@ -472,13 +472,48 @@ function renderSummaryList() {
       .join(' / ')}`;
     row.appendChild(ownerBreakdown);
 
-    row.addEventListener('click', () => {
+    const viewInListBtn = document.createElement('button');
+    viewInListBtn.type = 'button';
+    viewInListBtn.className = 'btn btn-outline btn-small equipment-summary-row-action';
+    viewInListBtn.textContent = '一覧で見る';
+    viewInListBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
       state.summaryFilter = itemName;
       applyViewMode('tile');
     });
+    row.appendChild(viewInListBtn);
+
+    const detailGroup = document.createElement('div');
+    detailGroup.className = 'equipment-summary-detail-group hidden';
+    for (const groupItem of group.items) {
+      detailGroup.appendChild(createDetailPanel(groupItem));
+    }
+
+    setupExpandableRow(row, detailGroup);
 
     els.equipmentSummary.appendChild(row);
+    els.equipmentSummary.appendChild(detailGroup);
   }
+}
+
+// 行クリック/Enter/Spaceでdetailグループの開閉をトグルする共通処理（種類別・在庫確認で共用）
+function setupExpandableRow(row, detailGroup) {
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+
+  row.addEventListener('click', () => {
+    const isHidden = detailGroup.classList.toggle('hidden');
+    row.classList.toggle('is-open', !isHidden);
+  });
+
+  row.addEventListener('keydown', (event) => {
+    // 「一覧で見る」等、行内の子要素にフォーカスがある時のkeydownバブリングでは反応しない
+    if (event.target !== row) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      row.click();
+    }
+  });
 }
 
 // 指定日時以前でequipment_idごとに一番新しいequipment_historyレコードを取得し、
@@ -523,11 +558,12 @@ async function handleInventoryCheck() {
       if (state.inventoryCountableFilter === 'countable' && !item.is_countable) continue;
 
       if (!groups.has(item.item_name)) {
-        groups.set(item.item_name, { count: 0, locations: new Map() });
+        groups.set(item.item_name, { count: 0, locations: new Map(), items: [] });
       }
       const group = groups.get(item.item_name);
       group.count += 1;
       group.locations.set(location, (group.locations.get(location) || 0) + 1);
+      group.items.push(item);
     }
 
     renderInventoryResult(groups);
@@ -552,7 +588,7 @@ function renderInventoryResult(groups) {
     const group = groups.get(itemName);
 
     const row = document.createElement('div');
-    row.className = 'equipment-summary-row is-static';
+    row.className = 'equipment-summary-row';
 
     const name = document.createElement('span');
     name.className = 'equipment-summary-name';
@@ -571,7 +607,16 @@ function renderInventoryResult(groups) {
       .join(' / ');
     row.appendChild(breakdown);
 
+    const detailGroup = document.createElement('div');
+    detailGroup.className = 'equipment-summary-detail-group hidden';
+    for (const groupItem of group.items) {
+      detailGroup.appendChild(createDetailPanel(groupItem));
+    }
+
+    setupExpandableRow(row, detailGroup);
+
     els.equipmentInventoryResult.appendChild(row);
+    els.equipmentInventoryResult.appendChild(detailGroup);
   }
 }
 
@@ -653,9 +698,7 @@ function createEquipmentTile(item) {
     tile.appendChild(badges);
   }
 
-  const detail = document.createElement('div');
-  detail.className = 'equipment-detail hidden';
-  renderDetailBody(item, detail);
+  const detail = createDetailPanel(item);
 
   tile.addEventListener('click', () => {
     const isHidden = detail.classList.toggle('hidden');
@@ -663,6 +706,15 @@ function createEquipmentTile(item) {
   });
 
   return { tile, detail };
+}
+
+// hidden状態のdetail要素を作ってrenderDetailBodyで中身を組み立てる。
+// 一覧タイル・種類別・在庫確認のどのビューからも同じ詳細パネルを使い回すための共通処理
+function createDetailPanel(item) {
+  const detail = document.createElement('div');
+  detail.className = 'equipment-detail hidden';
+  renderDetailBody(item, detail);
+  return detail;
 }
 
 function renderDetailBody(item, detail) {
@@ -827,8 +879,10 @@ function createQuantityAdjuster(item, detail) {
           : `数量: ${item.quantity}`;
       }
 
+      // 一覧タイルビューの詳細パネルだけ、直前の兄弟要素が本物のタイル(.equipment-tile)になる。
+      // 種類別・在庫確認では前の兄弟がnullか別itemのdetailパネルなので、そこでは何もしない
       const tile = detail.previousElementSibling;
-      if (tile) {
+      if (tile && tile.classList.contains('equipment-tile')) {
         updateTileQuantityDisplay(tile, item.quantity);
       }
 

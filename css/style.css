@@ -897,6 +897,7 @@ body {
   border-radius: 10px;
   background: #fff;
   padding: 12px;
+  cursor: pointer;
   font-family: inherit;
   cursor: pointer;
 }
@@ -918,8 +919,19 @@ body {
   color: var(--text-muted);
 }
 
-.equipment-summary-row.is-static {
-  cursor: default;
+.equipment-summary-row.is-open {
+  outline: 2px solid var(--orange-dark);
+  outline-offset: 2px;
+}
+
+.equipment-summary-row-action {
+  align-self: flex-start;
+}
+
+.equipment-summary-detail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .equipment-inventory {
