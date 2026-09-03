@@ -21,6 +21,7 @@ const state = {
   summaryFilter: null,
   ownerFilter: '',
   sharedFilter: '',
+  countableFilter: '',
   selectedImageFile: null,
 };
 
@@ -44,6 +45,8 @@ const els = {
   itemFormSubmit: document.getElementById('item-form-submit'),
   itemName: document.getElementById('item-name'),
   itemManagementNumber: document.getElementById('item-management-number'),
+  itemQuantity: document.getElementById('item-quantity'),
+  itemIsCountable: document.getElementById('item-is-countable'),
   itemLocation: document.getElementById('item-location'),
   itemOwnerBranch: document.getElementById('item-owner-branch'),
   itemOwnerPerson: document.getElementById('item-owner-person'),
@@ -61,6 +64,8 @@ const els = {
   equipmentOwnerFilter: document.getElementById('equipment-owner-filter'),
   equipmentSharedFilterWrap: document.getElementById('equipment-shared-filter-wrap'),
   equipmentSharedFilter: document.getElementById('equipment-shared-filter'),
+  equipmentCountableFilterWrap: document.getElementById('equipment-countable-filter-wrap'),
+  equipmentCountableFilter: document.getElementById('equipment-countable-filter'),
   equipmentFilterBanner: document.getElementById('equipment-filter-banner'),
   equipmentFilterLabel: document.getElementById('equipment-filter-label'),
   equipmentFilterClear: document.getElementById('equipment-filter-clear'),
@@ -170,6 +175,10 @@ function bindStaticEvents() {
   });
   els.equipmentSharedFilter.addEventListener('change', () => {
     state.sharedFilter = els.equipmentSharedFilter.value;
+    renderEquipmentList();
+  });
+  els.equipmentCountableFilter.addEventListener('change', () => {
+    state.countableFilter = els.equipmentCountableFilter.value;
     renderEquipmentList();
   });
   els.inventoryCheckBtn.addEventListener('click', handleInventoryCheck);
@@ -312,6 +321,7 @@ function applyViewMode(mode) {
   els.equipmentInventory.classList.toggle('hidden', mode !== 'inventory');
   els.equipmentOwnerFilterWrap.classList.toggle('hidden', mode !== 'tile');
   els.equipmentSharedFilterWrap.classList.toggle('hidden', mode !== 'tile');
+  els.equipmentCountableFilterWrap.classList.toggle('hidden', mode !== 'tile');
 
   if (mode === 'tile') {
     renderEquipmentList();
@@ -355,12 +365,13 @@ function renderEquipmentList() {
       if (state.sharedFilter === 'shared') return item.is_shared;
       if (state.sharedFilter === 'branch') return !item.is_shared;
       return true;
-    });
+    })
+    .filter((item) => state.countableFilter !== 'countable' || item.is_countable);
 
   if (items.length === 0) {
     els.equipmentList.appendChild(
       hintEl(
-        state.summaryFilter || state.ownerFilter || state.sharedFilter
+        state.summaryFilter || state.ownerFilter || state.sharedFilter || state.countableFilter
           ? '該当する備品はありません'
           : '登録されている備品はありません'
       )
@@ -573,6 +584,13 @@ function createEquipmentTile(item) {
     tile.appendChild(number);
   }
 
+  if (item.quantity >= 2) {
+    const quantity = document.createElement('span');
+    quantity.className = 'equipment-tile-quantity';
+    quantity.textContent = `×${item.quantity}`;
+    tile.appendChild(quantity);
+  }
+
   if (item.owner_branch) {
     const owner = document.createElement('span');
     owner.className = 'equipment-tile-owner';
@@ -580,11 +598,22 @@ function createEquipmentTile(item) {
     tile.appendChild(owner);
   }
 
-  if (item.is_shared) {
-    const badge = document.createElement('span');
-    badge.className = 'equipment-tile-badge';
-    badge.textContent = '全体使用';
-    tile.appendChild(badge);
+  if (item.is_shared || item.is_countable) {
+    const badges = document.createElement('div');
+    badges.className = 'equipment-tile-badges';
+    if (item.is_shared) {
+      const sharedBadge = document.createElement('span');
+      sharedBadge.className = 'equipment-tile-badge';
+      sharedBadge.textContent = '全体使用';
+      badges.appendChild(sharedBadge);
+    }
+    if (item.is_countable) {
+      const countableBadge = document.createElement('span');
+      countableBadge.className = 'equipment-tile-badge';
+      countableBadge.textContent = '変動';
+      badges.appendChild(countableBadge);
+    }
+    tile.appendChild(badges);
   }
 
   const detail = document.createElement('div');
@@ -623,6 +652,11 @@ function renderDetailBody(item, detail) {
     number.textContent = `No. ${item.management_number}`;
     detail.appendChild(number);
   }
+
+  const quantity = document.createElement('p');
+  quantity.className = 'equipment-quantity';
+  quantity.textContent = item.is_countable ? `数量: ${item.quantity} ・ 数量変動あり` : `数量: ${item.quantity}`;
+  detail.appendChild(quantity);
 
   const location = document.createElement('p');
   location.className = 'equipment-location';
@@ -750,44 +784,6 @@ function enterEditMode(item, detail) {
   detail.innerHTML = '';
   detail.classList.add('equipment-card-editing');
 
-  const nameInput = document.createElement('input');
-  nameInput.type = 'text';
-  nameInput.value = item.item_name;
-  nameInput.placeholder = '品目名';
-
-  const managementNumberInput = document.createElement('input');
-  managementNumberInput.type = 'text';
-  managementNumberInput.value = item.management_number || '';
-  managementNumberInput.placeholder = '管理番号（任意）';
-
-  const locationInput = document.createElement('input');
-  locationInput.type = 'text';
-  locationInput.value = item.location;
-  locationInput.placeholder = '保管場所';
-
-  const ownerBranchSelect = document.createElement('select');
-  populateOwnerBranchSelect(ownerBranchSelect, { includeBlank: true, blankLabel: '未定' });
-  ownerBranchSelect.value = item.owner_branch || '';
-
-  const ownerPersonInput = document.createElement('input');
-  ownerPersonInput.type = 'text';
-  ownerPersonInput.value = item.owner_person || '';
-  ownerPersonInput.placeholder = '担当者名（任意）';
-
-  const isSharedInput = document.createElement('input');
-  isSharedInput.type = 'checkbox';
-  isSharedInput.checked = Boolean(item.is_shared);
-
-  const isSharedLabel = document.createElement('label');
-  isSharedLabel.className = 'checkbox-label';
-  isSharedLabel.appendChild(isSharedInput);
-  isSharedLabel.appendChild(document.createTextNode('全体で使用'));
-
-  ownerBranchSelect.addEventListener('change', () => {
-    syncIsSharedCheckbox(ownerBranchSelect, isSharedInput);
-  });
-  syncIsSharedCheckbox(ownerBranchSelect, isSharedInput);
-
   let editSelectedImageFile = null;
 
   const imagePreview = document.createElement('img');
@@ -827,6 +823,63 @@ function enterEditMode(item, detail) {
     imageFileInput.value = '';
   });
 
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.value = item.item_name;
+  nameInput.placeholder = '品目名';
+
+  const managementNumberInput = document.createElement('input');
+  managementNumberInput.type = 'text';
+  managementNumberInput.value = item.management_number || '';
+  managementNumberInput.placeholder = '管理番号（任意）';
+
+  const quantityInput = document.createElement('input');
+  quantityInput.type = 'number';
+  quantityInput.min = '0';
+  quantityInput.step = '1';
+  quantityInput.value = String(item.quantity ?? 1);
+
+  const quantityLabel = document.createElement('label');
+  quantityLabel.textContent = '数量';
+  quantityLabel.appendChild(quantityInput);
+
+  const isCountableInput = document.createElement('input');
+  isCountableInput.type = 'checkbox';
+  isCountableInput.checked = Boolean(item.is_countable);
+
+  const isCountableLabel = document.createElement('label');
+  isCountableLabel.className = 'checkbox-label';
+  isCountableLabel.appendChild(isCountableInput);
+  isCountableLabel.appendChild(document.createTextNode('数量変動あり'));
+
+  const ownerBranchSelect = document.createElement('select');
+  populateOwnerBranchSelect(ownerBranchSelect, { includeBlank: true, blankLabel: '未定' });
+  ownerBranchSelect.value = item.owner_branch || '';
+
+  const isSharedInput = document.createElement('input');
+  isSharedInput.type = 'checkbox';
+  isSharedInput.checked = Boolean(item.is_shared);
+
+  const isSharedLabel = document.createElement('label');
+  isSharedLabel.className = 'checkbox-label';
+  isSharedLabel.appendChild(isSharedInput);
+  isSharedLabel.appendChild(document.createTextNode('全体で使用'));
+
+  ownerBranchSelect.addEventListener('change', () => {
+    syncIsSharedCheckbox(ownerBranchSelect, isSharedInput);
+  });
+  syncIsSharedCheckbox(ownerBranchSelect, isSharedInput);
+
+  const ownerPersonInput = document.createElement('input');
+  ownerPersonInput.type = 'text';
+  ownerPersonInput.value = item.owner_person || '';
+  ownerPersonInput.placeholder = '担当者名（任意）';
+
+  const locationInput = document.createElement('input');
+  locationInput.type = 'text';
+  locationInput.value = item.location;
+  locationInput.placeholder = '保管場所';
+
   const memoInput = document.createElement('textarea');
   memoInput.value = item.memo || '';
   memoInput.placeholder = 'メモ';
@@ -859,6 +912,8 @@ function enterEditMode(item, detail) {
       const payload = {
         item_name: itemName,
         management_number: managementNumberInput.value.trim(),
+        quantity: quantityInput.value,
+        is_countable: isCountableInput.checked,
         location: locationInput.value.trim(),
         memo: memoInput.value.trim(),
         owner_branch: ownerBranchSelect.value,
@@ -896,16 +951,18 @@ function enterEditMode(item, detail) {
   actions.appendChild(saveBtn);
   actions.appendChild(cancelBtn);
 
-  detail.appendChild(nameInput);
-  detail.appendChild(managementNumberInput);
-  detail.appendChild(locationInput);
-  detail.appendChild(ownerBranchSelect);
-  detail.appendChild(ownerPersonInput);
-  detail.appendChild(isSharedLabel);
   detail.appendChild(imagePreview);
   detail.appendChild(imageFileInput);
   detail.appendChild(imageCameraBtn);
   detail.appendChild(imageCameraInput);
+  detail.appendChild(nameInput);
+  detail.appendChild(managementNumberInput);
+  detail.appendChild(quantityLabel);
+  detail.appendChild(isCountableLabel);
+  detail.appendChild(ownerBranchSelect);
+  detail.appendChild(isSharedLabel);
+  detail.appendChild(ownerPersonInput);
+  detail.appendChild(locationInput);
   detail.appendChild(memoInput);
   detail.appendChild(updatedByInput);
   detail.appendChild(errorText);
@@ -1007,6 +1064,8 @@ async function handleCreateItem(event) {
     await api.createEquipment({
       item_name: els.itemName.value.trim(),
       management_number: els.itemManagementNumber.value.trim(),
+      quantity: els.itemQuantity.value,
+      is_countable: els.itemIsCountable.checked,
       location: els.itemLocation.value.trim(),
       image_url: imageUrl,
       memo: els.itemMemo.value.trim(),

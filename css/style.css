@@ -979,6 +979,12 @@ body {
   text-align: center;
 }
 
+.equipment-tile-quantity {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 .equipment-tile-owner {
   font-size: 12px;
   color: var(--orange-dark);
@@ -1015,6 +1021,14 @@ body {
   text-align: left;
 }
 
+.equipment-tile.has-image .equipment-tile-quantity {
+  width: 100%;
+  padding: 0 8px 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  text-align: left;
+}
+
 .equipment-tile.has-image .equipment-tile-owner {
   width: 100%;
   padding: 0 8px 6px;
@@ -1023,11 +1037,18 @@ body {
   text-align: left;
 }
 
-.equipment-tile-badge {
+.equipment-tile-badges {
   position: absolute;
   top: 6px;
   right: 6px;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.equipment-tile-badge {
   font-size: 11px;
   font-weight: 700;
   color: #fff;
@@ -1064,6 +1085,12 @@ body {
 }
 
 .equipment-management-number {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.equipment-quantity {
   margin: 0;
   font-size: 13px;
   color: var(--text-muted);

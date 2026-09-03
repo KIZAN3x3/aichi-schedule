@@ -3,13 +3,22 @@ const { resolveRole } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { SHARED_OWNER_BRANCHES } = require('./_lib/branches');
 
+// quantityは数値として扱い、未指定・不正値は1に、負の数は0に丸める
+function normalizeQuantity(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return 1;
+  }
+  return Math.max(0, Math.round(num));
+}
+
 // POST /api/equipment : 備品の新規登録（マスター管理者のみ）
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return methodNotAllowed(res, ['POST']);
   }
 
-  const { item_name, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, updated_by, password } = req.body || {};
+  const { item_name, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, quantity, is_countable, updated_by, password } = req.body || {};
   const role = resolveRole(password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
@@ -33,6 +42,8 @@ module.exports = async (req, res) => {
       owner_branch: owner_branch || null,
       owner_person: owner_person || null,
       is_shared: SHARED_OWNER_BRANCHES.includes(owner_branch) ? true : Boolean(is_shared),
+      quantity: normalizeQuantity(quantity),
+      is_countable: Boolean(is_countable),
       updated_by,
     })
     .select()

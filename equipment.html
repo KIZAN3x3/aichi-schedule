@@ -55,6 +55,13 @@
 
       <form id="item-form" class="event-form hidden">
         <label>
+          画像（任意）
+          <input type="file" id="item-image" accept="image/png,image/jpeg,image/webp,image/gif" />
+        </label>
+        <button type="button" id="item-image-camera-btn" class="btn btn-outline btn-small">📷 写真を撮る</button>
+        <input type="file" id="item-image-camera" accept="image/*" capture="environment" class="hidden" />
+        <img id="item-image-preview" class="image-preview" alt="画像プレビュー" />
+        <label>
           品目名
           <input type="text" id="item-name" placeholder="品目名" required />
         </label>
@@ -63,28 +70,29 @@
           <input type="text" id="item-management-number" placeholder="管理番号" />
         </label>
         <label>
-          保管場所
-          <input type="text" id="item-location" placeholder="保管場所" required />
+          数量
+          <input type="number" id="item-quantity" min="0" step="1" value="1" />
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="item-is-countable" />
+          数量変動あり
         </label>
         <label>
           所有（任意）
           <select id="item-owner-branch"></select>
-        </label>
-        <label>
-          担当者（任意）
-          <input type="text" id="item-owner-person" placeholder="担当者名" />
         </label>
         <label class="checkbox-label">
           <input type="checkbox" id="item-is-shared" />
           全体で使用
         </label>
         <label>
-          画像（任意）
-          <input type="file" id="item-image" accept="image/png,image/jpeg,image/webp,image/gif" />
+          担当者（任意）
+          <input type="text" id="item-owner-person" placeholder="担当者名" />
         </label>
-        <button type="button" id="item-image-camera-btn" class="btn btn-outline btn-small">📷 写真を撮る</button>
-        <input type="file" id="item-image-camera" accept="image/*" capture="environment" class="hidden" />
-        <img id="item-image-preview" class="image-preview" alt="画像プレビュー" />
+        <label>
+          保管場所
+          <input type="text" id="item-location" placeholder="保管場所" required />
+        </label>
         <label>
           メモ（任意）
           <textarea id="item-memo" placeholder="メモ"></textarea>
@@ -114,6 +122,14 @@
           <option value="">すべて</option>
           <option value="shared">全体で使用</option>
           <option value="branch">支部内のみ</option>
+        </select>
+      </div>
+
+      <div id="equipment-countable-filter-wrap" class="equipment-owner-filter-wrap">
+        <label for="equipment-countable-filter">数量で絞り込み</label>
+        <select id="equipment-countable-filter">
+          <option value="">すべて</option>
+          <option value="countable">数量変動ありのみ</option>
         </select>
       </div>
 
