@@ -8,6 +8,7 @@
   --text-muted: #8a7a6d;
   --border: #ecdcc8;
   --danger: #d1453b;
+  --detail-bg: rgba(224, 89, 10, 0.1);
 }
 
 * {
@@ -1076,9 +1077,11 @@ body {
 
 .equipment-detail {
   grid-column: 1 / -1;
+  background: var(--detail-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px;
+  border-left: 4px solid var(--orange-dark);
+  border-radius: 12px;
+  padding: 12px 12px 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1126,6 +1129,12 @@ body {
   font-family: inherit;
   font-size: 14px;
   text-align: center;
+}
+
+.equipment-quantity-status {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .equipment-location {

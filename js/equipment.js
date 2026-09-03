@@ -11,6 +11,8 @@ const RESIZE_QUALITIES = [0.8, 0.6, 0.4];
 const BUCKET = 'equipment-images';
 // 数量その場変更が自分自身のRealtime echoを消化しそこねた場合の保険（この時間内に届かなければ諦める）
 const REALTIME_ECHO_TIMEOUT_MS = 5000;
+// 数量の＋−操作をまとめて保存するまでの待ち時間（最後の操作からこの時間だけAPI呼び出しを遅らせる）
+const QUANTITY_SAVE_DEBOUNCE_MS = 1000;
 
 const state = {
   role: null,
@@ -373,7 +375,20 @@ function subscribeRealtime() {
     .subscribe();
 }
 
+// container配下にある数量アジャスターの、デバウンス待ちの保存があれば即座に実行する。
+// パネルを閉じる・一覧を作り直す（＝このDOMを破棄する）直前に呼ぶことで保存漏れを防ぐ
+function flushPendingQuantitySaves(container) {
+  const adjusters = container.querySelectorAll('.equipment-quantity-adjuster');
+  for (const adjuster of adjusters) {
+    if (typeof adjuster.flushPendingSave === 'function') {
+      adjuster.flushPendingSave();
+    }
+  }
+}
+
 function renderLoadingState() {
+  flushPendingQuantitySaves(els.equipmentList);
+  flushPendingQuantitySaves(els.equipmentSummary);
   els.equipmentList.innerHTML = '';
   els.equipmentList.appendChild(hintEl('読み込み中…'));
   els.equipmentSummary.innerHTML = '';
@@ -381,6 +396,7 @@ function renderLoadingState() {
 }
 
 function renderEquipmentList() {
+  flushPendingQuantitySaves(els.equipmentList);
   els.equipmentList.innerHTML = '';
 
   els.equipmentFilterBanner.classList.toggle('hidden', !state.summaryFilter);
@@ -418,6 +434,7 @@ function renderEquipmentList() {
 
 // item_nameでグループ化し、合計数と保管場所別の内訳をまとめる
 function renderSummaryList() {
+  flushPendingQuantitySaves(els.equipmentSummary);
   els.equipmentSummary.innerHTML = '';
 
   const items = state.items.filter(
@@ -504,6 +521,9 @@ function setupExpandableRow(row, detailGroup) {
   row.addEventListener('click', () => {
     const isHidden = detailGroup.classList.toggle('hidden');
     row.classList.toggle('is-open', !isHidden);
+    if (isHidden) {
+      flushPendingQuantitySaves(detailGroup);
+    }
   });
 
   row.addEventListener('keydown', (event) => {
@@ -520,6 +540,7 @@ function setupExpandableRow(row, detailGroup) {
 // その時点で各備品がどこにあったかを種類別に集計する
 async function handleInventoryCheck() {
   const value = els.inventoryDatetime.value;
+  flushPendingQuantitySaves(els.equipmentInventoryResult);
   els.equipmentInventoryResult.innerHTML = '';
 
   if (!value) {
@@ -576,6 +597,7 @@ async function handleInventoryCheck() {
 }
 
 function renderInventoryResult(groups) {
+  flushPendingQuantitySaves(els.equipmentInventoryResult);
   els.equipmentInventoryResult.innerHTML = '';
 
   if (groups.size === 0) {
@@ -703,6 +725,9 @@ function createEquipmentTile(item) {
   tile.addEventListener('click', () => {
     const isHidden = detail.classList.toggle('hidden');
     tile.classList.toggle('is-open', !isHidden);
+    if (isHidden) {
+      flushPendingQuantitySaves(detail);
+    }
   });
 
   return { tile, detail };
@@ -835,23 +860,88 @@ function createQuantityAdjuster(item, detail) {
   applyBtn.className = 'btn btn-primary btn-small';
   applyBtn.textContent = '更新';
 
+  const statusText = document.createElement('p');
+  statusText.className = 'equipment-quantity-status hidden';
+
   const errorText = document.createElement('p');
   errorText.className = 'form-error';
 
-  const setBusy = (busy) => {
-    minusBtn.disabled = busy || item.quantity <= 0;
-    plusBtn.disabled = busy;
-    quantityInput.disabled = busy;
-    applyBtn.disabled = busy;
-  };
+  // DB確定済みの値（保存失敗時の巻き戻し先）。item.quantityは表示用に即座に書き換えるので、
+  // 「確定値」はここで別途保持しておく
+  let savedQuantity = item.quantity;
+  let debounceTimer = null;
+  let saveInFlight = false;
+  let saveQueuedAfterInFlight = false;
 
-  async function saveQuantity(newQuantity) {
-    if (!state.myName) {
-      errorText.textContent = 'お名前を設定してから変更してください';
+  // ＋−操作中はbusyによる無効化をしない。0未満にできない、という状態としての無効化のみ行う
+  minusBtn.disabled = item.quantity <= 0;
+
+  function updateDisplays(quantity) {
+    quantityInput.value = String(quantity);
+
+    const quantityP = detail.querySelector('.equipment-quantity');
+    if (quantityP) {
+      quantityP.textContent = item.is_countable
+        ? `数量: ${quantity} ・ 数量変動あり`
+        : `数量: ${quantity}`;
+    }
+
+    // 一覧タイルビューの詳細パネルだけ、直前の兄弟要素が本物のタイル(.equipment-tile)になる。
+    // 種類別・在庫確認では前の兄弟がnullか別itemのdetailパネルなので、そこでは何もしない
+    const tile = detail.previousElementSibling;
+    if (tile && tile.classList.contains('equipment-tile')) {
+      updateTileQuantityDisplay(tile, quantity);
+    }
+  }
+
+  function scheduleDebouncedSave() {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      flushPendingSave();
+    }, QUANTITY_SAVE_DEBOUNCE_MS);
+  }
+
+  // ＋−操作: 画面表示だけ即座に更新し、実際の保存はデバウンス後にflushPendingSaveへ任せる
+  function bumpQuantity(delta) {
+    const next = Math.max(0, item.quantity + delta);
+    if (next === item.quantity) return;
+    item.quantity = next;
+    minusBtn.disabled = item.quantity <= 0;
+    updateDisplays(item.quantity);
+    scheduleDebouncedSave();
+  }
+
+  // 保留中のデバウンス保存があれば即座に実行する（パネルを閉じる・一覧を作り直す時などに呼ばれる）
+  async function flushPendingSave() {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    if (saveInFlight) {
+      saveQueuedAfterInFlight = true;
       return;
     }
+
+    const targetQuantity = item.quantity;
+    if (targetQuantity === savedQuantity) {
+      return;
+    }
+
+    if (!state.myName) {
+      errorText.textContent = 'お名前を設定してから変更してください';
+      item.quantity = savedQuantity;
+      minusBtn.disabled = item.quantity <= 0;
+      updateDisplays(item.quantity);
+      return;
+    }
+
+    saveInFlight = true;
     errorText.textContent = '';
-    setBusy(true);
+    statusText.textContent = '保存中…';
+    statusText.classList.remove('hidden');
 
     // 自分自身の更新で発生するRealtime echoを後でsubscribeRealtime側が消化できるよう予約する。
     // echoが届かなかった場合に備え、一定時間後に自動でカウンタを戻すタイマーも仕掛けておく
@@ -867,29 +957,14 @@ function createQuantityAdjuster(item, detail) {
 
     try {
       await api.updateEquipment(item.id, {
-        quantity: newQuantity,
+        quantity: targetQuantity,
         updated_by: state.myName,
         password: state.password,
       });
 
-      item.quantity = newQuantity;
-      quantityInput.value = String(item.quantity);
-
-      const quantityP = detail.querySelector('.equipment-quantity');
-      if (quantityP) {
-        quantityP.textContent = item.is_countable
-          ? `数量: ${item.quantity} ・ 数量変動あり`
-          : `数量: ${item.quantity}`;
-      }
-
-      // 一覧タイルビューの詳細パネルだけ、直前の兄弟要素が本物のタイル(.equipment-tile)になる。
-      // 種類別・在庫確認では前の兄弟がnullか別itemのdetailパネルなので、そこでは何もしない
-      const tile = detail.previousElementSibling;
-      if (tile && tile.classList.contains('equipment-tile')) {
-        updateTileQuantityDisplay(tile, item.quantity);
-      }
-
-      setBusy(false);
+      savedQuantity = targetQuantity;
+      statusText.classList.add('hidden');
+      statusText.textContent = '';
     } catch (err) {
       // 更新自体が失敗した場合はDBが変わっておらずechoも来ないので、予約したタイマー/カウンタをその場で巻き戻す
       clearTimeout(timeoutId);
@@ -899,28 +974,40 @@ function createQuantityAdjuster(item, detail) {
       }
       state.pendingLocalQuantityUpdates = Math.max(0, state.pendingLocalQuantityUpdates - 1);
 
+      // 表示をDB確定値まで巻き戻す
+      item.quantity = savedQuantity;
+      minusBtn.disabled = item.quantity <= 0;
+      updateDisplays(item.quantity);
+      statusText.classList.add('hidden');
+      statusText.textContent = '';
       errorText.textContent = err.message;
-      setBusy(false);
+    } finally {
+      saveInFlight = false;
+      if (saveQueuedAfterInFlight) {
+        saveQueuedAfterInFlight = false;
+        flushPendingSave();
+      }
     }
   }
 
-  minusBtn.addEventListener('click', () => {
-    if (item.quantity <= 0) return;
-    saveQuantity(item.quantity - 1);
-  });
-  plusBtn.addEventListener('click', () => {
-    saveQuantity(item.quantity + 1);
-  });
+  minusBtn.addEventListener('click', () => bumpQuantity(-1));
+  plusBtn.addEventListener('click', () => bumpQuantity(1));
+
   applyBtn.addEventListener('click', () => {
     const parsed = Number(quantityInput.value);
     if (!Number.isFinite(parsed) || parsed < 0) {
       errorText.textContent = '0以上の数量を入力してください';
       return;
     }
-    saveQuantity(Math.round(parsed));
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    item.quantity = Math.round(parsed);
+    minusBtn.disabled = item.quantity <= 0;
+    updateDisplays(item.quantity);
+    flushPendingSave();
   });
-
-  setBusy(false);
 
   const row = document.createElement('div');
   row.className = 'equipment-quantity-adjuster-row';
@@ -930,7 +1017,12 @@ function createQuantityAdjuster(item, detail) {
   row.appendChild(applyBtn);
 
   wrap.appendChild(row);
+  wrap.appendChild(statusText);
   wrap.appendChild(errorText);
+
+  // パネルを閉じる・一覧を作り直す直前に外部から呼べるよう、返す要素にflush関数を持たせておく
+  wrap.flushPendingSave = flushPendingSave;
+
   return wrap;
 }
 
@@ -1332,6 +1424,8 @@ async function handleCreateItem(event) {
 }
 
 function renderFatalError(message) {
+  flushPendingQuantitySaves(els.equipmentList);
+  flushPendingQuantitySaves(els.equipmentSummary);
   els.equipmentList.innerHTML = '';
   els.equipmentList.appendChild(hintEl(message));
   els.equipmentSummary.innerHTML = '';
