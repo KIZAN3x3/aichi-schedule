@@ -88,6 +88,7 @@ create table if not exists public.equipment (
                        )
                      ),
   owner_person       text,
+  is_shared          boolean not null default false,
   updated_by         text not null,
   updated_at         timestamptz not null default now()
 );
@@ -96,6 +97,7 @@ comment on table public.equipment is '全体共通の備品リスト（支部を
 comment on column public.equipment.image_url is 'Supabase Storageに保存した画像のURL';
 comment on column public.equipment.owner_branch is '所有（支部）。西県連/東県連/1支部〜16支部/その他の19択、未定ならnull';
 comment on column public.equipment.owner_person is '担当者名（任意入力、未定ならnull）';
+comment on column public.equipment.is_shared is '「全体で使用」フラグ。owner_branchが西県連/東県連の場合はAPI側で常にtrueを強制する';
 
 create index if not exists idx_equipment_item_name on public.equipment (item_name);
 

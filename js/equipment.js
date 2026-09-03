@@ -1,6 +1,6 @@
 import { getSupabaseClient } from './supabase-client.js';
 import { api } from './api.js';
-import { OWNER_BRANCH_OPTIONS } from './owner-branches.js';
+import { OWNER_BRANCH_OPTIONS, SHARED_OWNER_BRANCHES } from './owner-branches.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
@@ -20,6 +20,7 @@ const state = {
   viewMode: 'tile',
   summaryFilter: null,
   ownerFilter: '',
+  sharedFilter: '',
   selectedImageFile: null,
 };
 
@@ -46,6 +47,7 @@ const els = {
   itemLocation: document.getElementById('item-location'),
   itemOwnerBranch: document.getElementById('item-owner-branch'),
   itemOwnerPerson: document.getElementById('item-owner-person'),
+  itemIsShared: document.getElementById('item-is-shared'),
   itemImage: document.getElementById('item-image'),
   itemImageCameraBtn: document.getElementById('item-image-camera-btn'),
   itemImageCamera: document.getElementById('item-image-camera'),
@@ -57,6 +59,8 @@ const els = {
   viewInventoryBtn: document.getElementById('view-inventory-btn'),
   equipmentOwnerFilterWrap: document.getElementById('equipment-owner-filter-wrap'),
   equipmentOwnerFilter: document.getElementById('equipment-owner-filter'),
+  equipmentSharedFilterWrap: document.getElementById('equipment-shared-filter-wrap'),
+  equipmentSharedFilter: document.getElementById('equipment-shared-filter'),
   equipmentFilterBanner: document.getElementById('equipment-filter-banner'),
   equipmentFilterLabel: document.getElementById('equipment-filter-label'),
   equipmentFilterClear: document.getElementById('equipment-filter-clear'),
@@ -91,6 +95,15 @@ function populateOwnerBranchSelect(selectEl, { includeBlank, blankLabel } = {}) 
     option.value = branch;
     option.textContent = branch;
     selectEl.appendChild(option);
+  }
+}
+
+// 所有が西県連/東県連の間は「全体で使用」を常時チェック・操作不可にする
+function syncIsSharedCheckbox(ownerBranchSelectEl, isSharedCheckboxEl) {
+  const forced = SHARED_OWNER_BRANCHES.includes(ownerBranchSelectEl.value);
+  isSharedCheckboxEl.disabled = forced;
+  if (forced) {
+    isSharedCheckboxEl.checked = true;
   }
 }
 
@@ -138,6 +151,10 @@ function bindStaticEvents() {
     els.itemImage.value = '';
   });
 
+  els.itemOwnerBranch.addEventListener('change', () => {
+    syncIsSharedCheckbox(els.itemOwnerBranch, els.itemIsShared);
+  });
+
   els.itemForm.addEventListener('submit', handleCreateItem);
 
   els.viewTileBtn.addEventListener('click', () => setViewMode('tile'));
@@ -149,6 +166,10 @@ function bindStaticEvents() {
   });
   els.equipmentOwnerFilter.addEventListener('change', () => {
     state.ownerFilter = els.equipmentOwnerFilter.value;
+    renderEquipmentList();
+  });
+  els.equipmentSharedFilter.addEventListener('change', () => {
+    state.sharedFilter = els.equipmentSharedFilter.value;
     renderEquipmentList();
   });
   els.inventoryCheckBtn.addEventListener('click', handleInventoryCheck);
@@ -290,6 +311,7 @@ function applyViewMode(mode) {
   els.equipmentSummary.classList.toggle('hidden', mode !== 'summary');
   els.equipmentInventory.classList.toggle('hidden', mode !== 'inventory');
   els.equipmentOwnerFilterWrap.classList.toggle('hidden', mode !== 'tile');
+  els.equipmentSharedFilterWrap.classList.toggle('hidden', mode !== 'tile');
 
   if (mode === 'tile') {
     renderEquipmentList();
@@ -328,11 +350,20 @@ function renderEquipmentList() {
 
   const items = state.items
     .filter((item) => !state.summaryFilter || item.item_name === state.summaryFilter)
-    .filter((item) => !state.ownerFilter || item.owner_branch === state.ownerFilter);
+    .filter((item) => !state.ownerFilter || item.owner_branch === state.ownerFilter)
+    .filter((item) => {
+      if (state.sharedFilter === 'shared') return item.is_shared;
+      if (state.sharedFilter === 'branch') return !item.is_shared;
+      return true;
+    });
 
   if (items.length === 0) {
     els.equipmentList.appendChild(
-      hintEl(state.summaryFilter || state.ownerFilter ? '該当する備品はありません' : '登録されている備品はありません')
+      hintEl(
+        state.summaryFilter || state.ownerFilter || state.sharedFilter
+          ? '該当する備品はありません'
+          : '登録されている備品はありません'
+      )
     );
     return;
   }
@@ -549,6 +580,13 @@ function createEquipmentTile(item) {
     tile.appendChild(owner);
   }
 
+  if (item.is_shared) {
+    const badge = document.createElement('span');
+    badge.className = 'equipment-tile-badge';
+    badge.textContent = '全体使用';
+    tile.appendChild(badge);
+  }
+
   const detail = document.createElement('div');
   detail.className = 'equipment-detail hidden';
   renderDetailBody(item, detail);
@@ -595,6 +633,13 @@ function renderDetailBody(item, detail) {
   owner.className = 'equipment-owner';
   owner.textContent = `所有：${item.owner_branch || '未定'}（担当：${item.owner_person || '×'}）`;
   detail.appendChild(owner);
+
+  if (item.is_shared) {
+    const badge = document.createElement('span');
+    badge.className = 'equipment-shared-badge';
+    badge.textContent = '全体使用';
+    detail.appendChild(badge);
+  }
 
   if (item.memo) {
     const memo = document.createElement('p');
@@ -729,6 +774,20 @@ function enterEditMode(item, detail) {
   ownerPersonInput.value = item.owner_person || '';
   ownerPersonInput.placeholder = '担当者名（任意）';
 
+  const isSharedInput = document.createElement('input');
+  isSharedInput.type = 'checkbox';
+  isSharedInput.checked = Boolean(item.is_shared);
+
+  const isSharedLabel = document.createElement('label');
+  isSharedLabel.className = 'checkbox-label';
+  isSharedLabel.appendChild(isSharedInput);
+  isSharedLabel.appendChild(document.createTextNode('全体で使用'));
+
+  ownerBranchSelect.addEventListener('change', () => {
+    syncIsSharedCheckbox(ownerBranchSelect, isSharedInput);
+  });
+  syncIsSharedCheckbox(ownerBranchSelect, isSharedInput);
+
   let editSelectedImageFile = null;
 
   const imagePreview = document.createElement('img');
@@ -804,6 +863,7 @@ function enterEditMode(item, detail) {
         memo: memoInput.value.trim(),
         owner_branch: ownerBranchSelect.value,
         owner_person: ownerPersonInput.value.trim(),
+        is_shared: isSharedInput.checked,
         updated_by: updatedBy,
         password: state.password,
       };
@@ -841,6 +901,7 @@ function enterEditMode(item, detail) {
   detail.appendChild(locationInput);
   detail.appendChild(ownerBranchSelect);
   detail.appendChild(ownerPersonInput);
+  detail.appendChild(isSharedLabel);
   detail.appendChild(imagePreview);
   detail.appendChild(imageFileInput);
   detail.appendChild(imageCameraBtn);
@@ -951,6 +1012,7 @@ async function handleCreateItem(event) {
       memo: els.itemMemo.value.trim(),
       owner_branch: els.itemOwnerBranch.value,
       owner_person: els.itemOwnerPerson.value.trim(),
+      is_shared: els.itemIsShared.checked,
       updated_by: updatedBy,
       password: state.password,
     });
@@ -960,6 +1022,7 @@ async function handleCreateItem(event) {
     els.itemImagePreview.classList.remove('visible');
     els.itemForm.classList.add('hidden');
     els.newItemToggleBtn.textContent = '＋ 備品を登録';
+    syncIsSharedCheckbox(els.itemOwnerBranch, els.itemIsShared);
     await fetchItems();
   } catch (err) {
     els.itemFormError.textContent = err.message;

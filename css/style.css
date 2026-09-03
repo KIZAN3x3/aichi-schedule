@@ -495,6 +495,29 @@ body {
   color: var(--text-muted);
 }
 
+.event-form label.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.event-form label.checkbox-label input[type='checkbox'] {
+  width: auto;
+}
+
+.checkbox-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+.equipment-card-editing input[type='checkbox'] {
+  width: auto;
+}
+
 .event-form-row {
   display: flex;
   gap: 10px;
@@ -1000,6 +1023,19 @@ body {
   text-align: left;
 }
 
+.equipment-tile-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--orange-dark);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
 .equipment-tile.is-open {
   outline: 2px solid var(--orange-dark);
   outline-offset: 2px;
@@ -1043,6 +1079,16 @@ body {
   margin: 0;
   font-size: 14px;
   color: var(--text-muted);
+}
+
+.equipment-shared-badge {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--orange-dark);
+  border-radius: 999px;
+  padding: 2px 8px;
 }
 
 .equipment-memo {

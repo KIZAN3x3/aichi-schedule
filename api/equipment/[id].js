@@ -1,6 +1,7 @@
 const { getSupabaseClient } = require('../_lib/supabase');
 const { resolveRole } = require('../_lib/auth');
 const { sendJson, methodNotAllowed } = require('../_lib/http');
+const { SHARED_OWNER_BRANCHES } = require('../_lib/branches');
 
 // PUT /api/equipment/:id    品目名・場所・画像・メモ更新（一般・管理者とも同一権限）
 // DELETE /api/equipment/:id 備品削除（マスター管理者のみ）
@@ -9,7 +10,7 @@ module.exports = async (req, res) => {
   const supabase = getSupabaseClient();
 
   if (req.method === 'PUT') {
-    const { item_name, management_number, location, image_url, memo, owner_branch, owner_person, updated_by, password } = req.body || {};
+    const { item_name, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, updated_by, password } = req.body || {};
     const role = resolveRole(password);
     if (!role) {
       return sendJson(res, 401, { error: 'パスワードが違います' });
@@ -20,7 +21,7 @@ module.exports = async (req, res) => {
 
     const { data: existing, error: fetchError } = await supabase
       .from('equipment')
-      .select('location')
+      .select('location, owner_branch')
       .eq('id', id)
       .single();
     if (fetchError || !existing) {
@@ -35,6 +36,14 @@ module.exports = async (req, res) => {
     if (memo !== undefined) updates.memo = memo;
     if (owner_branch !== undefined) updates.owner_branch = owner_branch || null;
     if (owner_person !== undefined) updates.owner_person = owner_person || null;
+
+    // owner_branchが西県連/東県連(更新後の実効値)ならis_sharedは常にtrueを強制する
+    const effectiveOwnerBranch = owner_branch !== undefined ? owner_branch : existing.owner_branch;
+    if (SHARED_OWNER_BRANCHES.includes(effectiveOwnerBranch)) {
+      updates.is_shared = true;
+    } else if (is_shared !== undefined) {
+      updates.is_shared = Boolean(is_shared);
+    }
 
     const { data, error } = await supabase
       .from('equipment')

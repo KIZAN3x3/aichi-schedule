@@ -74,6 +74,10 @@
           担当者（任意）
           <input type="text" id="item-owner-person" placeholder="担当者名" />
         </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="item-is-shared" />
+          全体で使用
+        </label>
         <label>
           画像（任意）
           <input type="file" id="item-image" accept="image/png,image/jpeg,image/webp,image/gif" />
@@ -102,6 +106,15 @@
       <div id="equipment-owner-filter-wrap" class="equipment-owner-filter-wrap">
         <label for="equipment-owner-filter">所有で絞り込み</label>
         <select id="equipment-owner-filter"></select>
+      </div>
+
+      <div id="equipment-shared-filter-wrap" class="equipment-owner-filter-wrap">
+        <label for="equipment-shared-filter">範囲で絞り込み</label>
+        <select id="equipment-shared-filter">
+          <option value="">すべて</option>
+          <option value="shared">全体で使用</option>
+          <option value="branch">支部内のみ</option>
+        </select>
       </div>
 
       <div id="equipment-filter-banner" class="equipment-filter-banner hidden">

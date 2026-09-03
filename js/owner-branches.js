@@ -20,3 +20,6 @@ export const OWNER_BRANCH_OPTIONS = [
   '16支部',
   'その他',
 ];
+
+// このいずれかを所有に選ぶと「全体で使用」は常にtrue（チェック必須・操作不可）になる
+export const SHARED_OWNER_BRANCHES = ['西県連', '東県連'];
