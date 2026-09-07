@@ -1,6 +1,8 @@
 import { BRANCHES } from './branches.js';
 import { getSupabaseClient } from './supabase-client.js';
 import { api } from './api.js';
+import { downloadCsv } from './api.js';
+import { OWNER_BRANCH_OPTIONS } from './owner-branches.js';
 import {
   FIXED_CATEGORIES,
   OTHER_CATEGORY,
@@ -59,6 +61,16 @@ const els = {
   nameInput: document.getElementById('name-input'),
   branchSelect: document.getElementById('branch-select'),
   branchOptionsBtn: document.getElementById('branch-options-btn'),
+  csvExportBtn: document.getElementById('csv-export-btn'),
+  csvExportDialog: document.getElementById('csv-export-dialog'),
+  csvExportForm: document.getElementById('csv-export-form'),
+  csvExportFrom: document.getElementById('csv-export-from'),
+  csvExportTo: document.getElementById('csv-export-to'),
+  csvExportBranch: document.getElementById('csv-export-branch'),
+  csvExportPeriodWrap: document.getElementById('csv-export-period-wrap'),
+  csvExportError: document.getElementById('csv-export-error'),
+  csvExportSubmit: document.getElementById('csv-export-submit'),
+  csvExportCancel: document.getElementById('csv-export-cancel'),
   calendarMonthLabel: document.getElementById('calendar-month-label'),
   prevMonthBtn: document.getElementById('prev-month-btn'),
   nextMonthBtn: document.getElementById('next-month-btn'),
@@ -89,11 +101,13 @@ init();
 
 async function init() {
   populateBranchOptions();
+  populateCsvExportBranchOptions();
   populateCategorySelect(els.eventCategorySelect);
   bindCategoryToggle(els.eventCategorySelect, els.eventCategoryOtherWrap);
   renderWeekdayHeader();
   await loadHolidays();
   bindStaticEvents();
+  bindCsvExportEvents();
   restoreSession();
 }
 
@@ -329,6 +343,7 @@ function enterApp() {
   els.roleText.textContent = ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
   els.branchOptionsBtn.classList.toggle('hidden', state.role !== 'admin');
+  els.csvExportBtn.classList.toggle('hidden', state.role !== 'admin');
   boot();
 }
 
@@ -1121,4 +1136,80 @@ async function handleCreateEvent(event) {
 function renderFatalError(message) {
   els.eventList.innerHTML = '';
   els.eventList.appendChild(hintEl(message));
+}
+
+function populateCsvExportBranchOptions() {
+  for (const branch of OWNER_BRANCH_OPTIONS) {
+    const opt = document.createElement('option');
+    opt.value = branch;
+    opt.textContent = branch;
+    els.csvExportBranch.appendChild(opt);
+  }
+}
+
+function updateCsvExportPeriodState(isEquipment) {
+  els.csvExportFrom.disabled = isEquipment;
+  els.csvExportTo.disabled = isEquipment;
+  els.csvExportPeriodWrap.classList.toggle('csv-export-period-disabled', isEquipment);
+}
+
+function bindCsvExportEvents() {
+  els.csvExportBtn.addEventListener('click', () => {
+    els.csvExportError.textContent = '';
+    els.csvExportDialog.showModal();
+  });
+
+  els.csvExportCancel.addEventListener('click', () => {
+    els.csvExportDialog.close();
+  });
+
+  const typeRadios = els.csvExportForm.querySelectorAll('input[name="csv-export-type"]');
+  for (const radio of typeRadios) {
+    radio.addEventListener('change', () => {
+      if (radio.checked) {
+        updateCsvExportPeriodState(radio.value === 'equipment');
+      }
+    });
+  }
+
+  els.csvExportForm.addEventListener('submit', handleCsvExportSubmit);
+}
+
+async function handleCsvExportSubmit(event) {
+  event.preventDefault();
+  els.csvExportError.textContent = '';
+
+  const type = els.csvExportForm.querySelector('input[name="csv-export-type"]:checked').value;
+  const from = els.csvExportFrom.value;
+  const to = els.csvExportTo.value;
+  const branch = els.csvExportBranch.value;
+
+  if (type !== 'equipment') {
+    if (!from || !to) {
+      els.csvExportError.textContent = '開始日と終了日を指定してください';
+      return;
+    }
+    if (from > to) {
+      els.csvExportError.textContent = '開始日は終了日より前にしてください';
+      return;
+    }
+  }
+
+  els.csvExportSubmit.disabled = true;
+  els.csvExportSubmit.textContent = '出力中...';
+  try {
+    await downloadCsv({
+      password: state.password,
+      type,
+      from: type === 'equipment' ? '' : from,
+      to: type === 'equipment' ? '' : to,
+      branch,
+    });
+    els.csvExportDialog.close();
+  } catch (err) {
+    els.csvExportError.textContent = err.message;
+  } finally {
+    els.csvExportSubmit.disabled = false;
+    els.csvExportSubmit.textContent = '出力する';
+  }
 }

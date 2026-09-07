@@ -1225,3 +1225,110 @@ body {
   font-size: 13px;
   color: var(--text-muted);
 }
+
+/* CSV出力: <a>ではなく<button>にclass="branch-options-btn"を流用しているため、
+   ブラウザのデフォルトbutton枠線・フォントとのズレのみ差分で補正する */
+#csv-export-btn {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+/* CSV出力ダイアログ */
+.csv-export-dialog {
+  border: none;
+  border-radius: 12px;
+  padding: 0;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-shadow: 0 12px 32px rgba(43, 33, 25, 0.25);
+}
+
+.csv-export-dialog::backdrop {
+  background: rgba(43, 33, 25, 0.45);
+}
+
+.csv-export-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+}
+
+.csv-export-title {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text);
+}
+
+.csv-export-type-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.csv-export-type-group legend {
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.csv-export-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.csv-export-radio-label input[type='radio'] {
+  width: auto;
+}
+
+#csv-export-period-wrap {
+  display: flex;
+  gap: 10px;
+}
+
+#csv-export-period-wrap label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+/* 備品一覧選択時、期間欄をグレーアウトするためJSから付与するクラス */
+#csv-export-period-wrap.csv-export-period-disabled {
+  opacity: 0.45;
+}
+
+.csv-export-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+.csv-export-form input,
+.csv-export-form select {
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 16px;
+  font-family: inherit;
+}
+
+.csv-export-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}

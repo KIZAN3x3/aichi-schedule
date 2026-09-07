@@ -40,6 +40,7 @@
       <button type="button" id="logout-btn" class="status-logout-btn" title="ログアウト" aria-label="ログアウト">ログアウト</button>
     </div>
     <a href="branch-options.html" id="branch-options-btn" class="branch-options-btn hidden">⚙ 候補管理</a>
+    <button type="button" id="csv-export-btn" class="branch-options-btn hidden">⬇ CSV出力</button>
   </header>
 
   <nav class="page-nav">
@@ -121,6 +122,57 @@
     </section>
   </main>
 </div>
+
+<dialog id="csv-export-dialog" class="csv-export-dialog">
+  <form id="csv-export-form" class="csv-export-form">
+    <h2 class="csv-export-title">CSV出力</h2>
+
+    <fieldset class="csv-export-type-group">
+      <legend>出力種類</legend>
+      <label class="csv-export-radio-label">
+        <input type="radio" name="csv-export-type" value="events" checked />
+        予定
+      </label>
+      <label class="csv-export-radio-label">
+        <input type="radio" name="csv-export-type" value="equipment" />
+        備品一覧
+      </label>
+      <label class="csv-export-radio-label">
+        <input type="radio" name="csv-export-type" value="participants" />
+        参加者リスト
+      </label>
+      <label class="csv-export-radio-label">
+        <input type="radio" name="csv-export-type" value="history" />
+        在庫チェック履歴
+      </label>
+    </fieldset>
+
+    <div id="csv-export-period-wrap">
+      <label>
+        開始日
+        <input type="date" id="csv-export-from" />
+      </label>
+      <label>
+        終了日
+        <input type="date" id="csv-export-to" />
+      </label>
+    </div>
+
+    <label>
+      支部
+      <select id="csv-export-branch">
+        <option value="">全支部</option>
+      </select>
+    </label>
+
+    <p id="csv-export-error" class="form-error"></p>
+
+    <div class="csv-export-actions">
+      <button type="button" id="csv-export-cancel" class="btn btn-outline">キャンセル</button>
+      <button type="submit" id="csv-export-submit" class="btn btn-primary">出力する</button>
+    </div>
+  </form>
+</dialog>
 
 <script type="module" src="js/app.js"></script>
 </body>
