@@ -1,7 +1,6 @@
 import { BRANCHES } from './branches.js';
 import { getSupabaseClient } from './supabase-client.js';
-import { api } from './api.js';
-import { downloadCsv } from './api.js';
+import { api, downloadCsv } from './api.js';
 import { OWNER_BRANCH_OPTIONS } from './owner-branches.js';
 import {
   FIXED_CATEGORIES,

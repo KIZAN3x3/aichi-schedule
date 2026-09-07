@@ -248,6 +248,12 @@ body {
   text-decoration: none;
 }
 
+.header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .back-link {
   display: inline-block;
   margin-bottom: 4px;
