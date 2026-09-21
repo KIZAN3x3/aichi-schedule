@@ -111,10 +111,12 @@ async function fetchEquipment(supabase, { branch }) {
   return { headers, rows, label: '備品一覧' };
 }
 
+const PARTICIPANT_STATUS_LABELS = { going: '参加', not_going: '不参加' };
+
 async function fetchParticipants(supabase, { from, to, branch }) {
   let query = supabase
     .from('participants')
-    .select('participant_name,created_at,events!inner(branch,date,time,place,content)')
+    .select('participant_name,status,comment,registered_by,created_at,events!inner(branch,date,time,place,content)')
     .order('created_at', { ascending: true });
   if (from) query = query.gte('events.date', from);
   if (to) query = query.lte('events.date', to);
@@ -123,7 +125,7 @@ async function fetchParticipants(supabase, { from, to, branch }) {
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  const headers = ['支部', '予定日', '開始時刻', '場所', '活動内容', '参加者名', '参加登録日時'];
+  const headers = ['支部', '予定日', '開始時刻', '場所', '活動内容', '参加者名', '参加状況', 'コメント', '登録者', '参加登録日時'];
   const rows = (data || []).map((r) => [
     r.events?.branch,
     r.events?.date,
@@ -131,6 +133,9 @@ async function fetchParticipants(supabase, { from, to, branch }) {
     r.events?.place,
     r.events?.content,
     r.participant_name,
+    PARTICIPANT_STATUS_LABELS[r.status] ?? r.status,
+    r.comment,
+    r.registered_by,
     formatJstDateTime(r.created_at),
   ]);
   return { headers, rows, label: '参加者リスト' };
