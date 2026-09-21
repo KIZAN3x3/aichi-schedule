@@ -711,25 +711,84 @@ body {
 
 .participants-section {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 4px;
 }
 
-.participants-list {
+.participant-group {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
-  flex: 1;
 }
 
-.participant-chip {
-  background: #fdeee0;
-  color: var(--orange-dark);
-  border-radius: 999px;
-  padding: 4px 12px;
+.participant-group-title {
+  margin: 0;
   font-size: 14px;
+  font-weight: 600;
+  color: var(--orange-dark);
+}
+
+.participant-group-not_going .participant-group-title {
+  color: var(--text-muted);
+}
+
+.participant-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 10px;
+  background: #fdeee0;
+  border-radius: 8px;
+}
+
+.participant-group-not_going .participant-row {
+  background: #f3eee8;
+}
+
+.participant-name {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.participant-registered-by {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.participant-row-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.participant-row-actions .btn-small {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+/* コメントは行の下段に全幅で表示。長文・改行はそのまま折り返す */
+.participant-comment {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.participant-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.participant-buttons .btn {
+  flex: 1;
+  min-width: 0;
 }
 
 .event-actions {
@@ -1337,4 +1396,35 @@ body {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+/* 参加登録ダイアログ: CSV出力ダイアログのスタイルを流用しているため、textarea等の差分のみ補正する */
+.csv-export-form textarea {
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 16px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.csv-export-form input[readonly] {
+  background: #f3eee8;
+  color: var(--text-muted);
+}
+
+.participant-proxy-note {
+  margin: -6px 0 0;
+  font-size: 13px;
+  color: var(--orange-dark);
+  overflow-wrap: anywhere;
+}
+
+.participant-comment-count {
+  margin: -8px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
 }

@@ -24,6 +24,7 @@ import { loadHolidays, isHoliday } from './holidays.js';
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般', admin: '管理者' };
 const MY_EVENTS_DISMISSED_KEY = 'aichi-schedule:myEventsDismissed';
+const PARTICIPANT_COMMENT_MAX = 200;
 
 const state = {
   role: null,
@@ -42,6 +43,8 @@ const state = {
   realtimeChannel: null,
   branchPlaceOptions: [],
   branchCategoryOptions: [],
+  participantDialog: null, // { eventId, status, editing }
+  pendingParticipantOpen: null, // 名前未設定で大ボタンを押した場合の再開用 { eventId, status }
 };
 
 const els = {
@@ -70,6 +73,18 @@ const els = {
   csvExportError: document.getElementById('csv-export-error'),
   csvExportSubmit: document.getElementById('csv-export-submit'),
   csvExportCancel: document.getElementById('csv-export-cancel'),
+  participantDialog: document.getElementById('participant-dialog'),
+  participantForm: document.getElementById('participant-form'),
+  participantTitle: document.getElementById('participant-dialog-title'),
+  participantStatusGroup: document.getElementById('participant-status-group'),
+  participantStatusRadios: document.querySelectorAll('input[name="participant-status"]'),
+  participantName: document.getElementById('participant-name'),
+  participantProxyNote: document.getElementById('participant-proxy-note'),
+  participantComment: document.getElementById('participant-comment'),
+  participantCommentCount: document.getElementById('participant-comment-count'),
+  participantError: document.getElementById('participant-error'),
+  participantSubmit: document.getElementById('participant-submit'),
+  participantCancel: document.getElementById('participant-cancel'),
   calendarMonthLabel: document.getElementById('calendar-month-label'),
   prevMonthBtn: document.getElementById('prev-month-btn'),
   nextMonthBtn: document.getElementById('next-month-btn'),
@@ -107,6 +122,7 @@ async function init() {
   await loadHolidays();
   bindStaticEvents();
   bindCsvExportEvents();
+  bindParticipantDialogEvents();
   restoreSession();
 }
 
@@ -254,6 +270,7 @@ function saveNameEdit() {
   } else {
     renderCurrentView();
   }
+  resumePendingParticipantDialog();
 }
 
 function updateNameDisplay() {
@@ -454,7 +471,8 @@ async function refreshMyEvents() {
   const { data: rows, error } = await state.supabase
     .from('participants')
     .select('event_id')
-    .eq('participant_name', state.myName);
+    .eq('participant_name', state.myName)
+    .eq('status', 'going');
 
   if (error) {
     console.error(error);
@@ -870,62 +888,224 @@ function createCategoryBadge(category) {
   return badge;
 }
 
+// 自分の行 = 本人の行 または 自分が代理登録した行。管理者も特別扱いしない
+function isMyRow(p) {
+  if (!state.myName) return false; // 表示名が空のとき、registered_by が空欄の行に誤一致しないため
+  return p.participant_name === state.myName || p.registered_by === state.myName;
+}
+
 function createParticipantsSection(event) {
   const section = document.createElement('div');
   section.className = 'participants-section';
 
-  const list = document.createElement('div');
-  list.className = 'participants-list';
-  for (const p of event.participants) {
-    const chip = document.createElement('span');
-    chip.className = 'participant-chip';
-    chip.textContent = p.participant_name;
-    list.appendChild(chip);
-  }
-  if (event.participants.length === 0) {
-    const empty = document.createElement('span');
-    empty.className = 'hint-text';
-    empty.textContent = 'まだ参加者はいません';
-    list.appendChild(empty);
+  const sorted = [...event.participants].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const going = sorted.filter((p) => p.status === 'going');
+  const notGoing = sorted.filter((p) => p.status === 'not_going');
+
+  section.appendChild(createParticipantGroup(event, '参加', going, 'going'));
+  if (notGoing.length > 0) {
+    section.appendChild(createParticipantGroup(event, '不参加', notGoing, 'not_going'));
   }
 
-  const joinBtn = document.createElement('button');
-  joinBtn.type = 'button';
-  const alreadyJoined = event.participants.some((p) => p.participant_name === state.myName);
-  joinBtn.className = alreadyJoined ? 'btn btn-muted btn-small' : 'btn btn-outline btn-small';
-  joinBtn.textContent = alreadyJoined ? '参加を取り消す' : '参加する';
-  joinBtn.addEventListener('click', async () => {
-    if (!state.myName) {
-      alert('先に画面上部で表示名を入力してください');
-      return;
-    }
-    if (alreadyJoined && !confirm('参加を取り消しますか？')) return;
+  const buttons = document.createElement('div');
+  buttons.className = 'participant-buttons';
+  for (const [status, label, cls] of [
+    ['going', '✅ 参加 / コメント', 'btn btn-outline btn-small'],
+    ['not_going', '❌ 不参加 / コメント', 'btn btn-muted btn-small'],
+  ]) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = cls;
+    btn.textContent = label;
+    btn.addEventListener('click', () => openNewParticipantDialog(event.id, status));
+    buttons.appendChild(btn);
+  }
+  section.appendChild(buttons);
+  return section;
+}
 
-    joinBtn.disabled = true;
-    try {
-      if (alreadyJoined) {
+function createParticipantGroup(event, title, rows, status) {
+  const group = document.createElement('div');
+  group.className = `participant-group participant-group-${status}`;
+
+  const heading = document.createElement('p');
+  heading.className = 'participant-group-title';
+  heading.textContent = `${title} ${rows.length}名`;
+  group.appendChild(heading);
+
+  if (rows.length === 0) {
+    group.appendChild(hintEl('まだ参加者はいません'));
+    return group;
+  }
+  for (const p of rows) {
+    group.appendChild(createParticipantRow(event, p));
+  }
+  return group;
+}
+
+function createParticipantRow(event, p) {
+  const row = document.createElement('div');
+  row.className = 'participant-row';
+
+  const name = document.createElement('span');
+  name.className = 'participant-name';
+  name.textContent = p.participant_name; // textContent のみ。HTMLとして解釈されない
+  row.appendChild(name);
+
+  if (p.registered_by && p.registered_by !== p.participant_name) {
+    const registeredBy = document.createElement('span');
+    registeredBy.className = 'participant-registered-by';
+    registeredBy.textContent = `（${p.registered_by}さんが登録）`;
+    row.appendChild(registeredBy);
+  }
+
+  if (isMyRow(p)) {
+    const actions = document.createElement('span');
+    actions.className = 'participant-row-actions';
+
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'btn btn-outline btn-small';
+    editBtn.textContent = '編集';
+    editBtn.addEventListener('click', () => openParticipantDialog(event.id, p.status, p));
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn btn-muted btn-small';
+    cancelBtn.textContent = '取消';
+    cancelBtn.addEventListener('click', async () => {
+      const isSelf = p.participant_name === state.myName;
+      const message = isSelf ? '参加を取り消しますか？' : `${p.participant_name}さんの参加を取り消しますか？`;
+      if (!confirm(message)) return;
+      cancelBtn.disabled = true;
+      try {
         await api.leaveEvent({
           event_id: event.id,
-          participant_name: state.myName,
+          participant_name: p.participant_name, // 代理登録した行では自分の名前とは限らない
           password: state.password,
         });
-      } else {
-        await api.joinEvent({
-          event_id: event.id,
-          participant_name: state.myName,
-          password: state.password,
-        });
+        await refreshCurrentEvents();
+      } catch (err) {
+        alert(err.message);
+        cancelBtn.disabled = false;
       }
-      await refreshCurrentEvents();
-    } catch (err) {
-      alert(err.message);
-      joinBtn.disabled = false;
-    }
-  });
+    });
 
-  section.appendChild(list);
-  section.appendChild(joinBtn);
-  return section;
+    actions.append(editBtn, cancelBtn);
+    row.appendChild(actions);
+  }
+
+  if (p.comment) {
+    const comment = document.createElement('span');
+    comment.className = 'participant-comment';
+    comment.textContent = p.comment;
+    row.appendChild(comment);
+  }
+  return row;
+}
+
+// 大ボタン（新規登録の入口）。表示名が未設定なら先に名前入力を求め、入力後に自動でモーダルを開く
+function openNewParticipantDialog(eventId, status) {
+  if (state.myName) {
+    openParticipantDialog(eventId, status, null);
+    return;
+  }
+  state.pendingParticipantOpen = { eventId, status };
+  alert('先に自分の名前を入力してください（入力後に登録画面が開きます）');
+  els.nameDisplayBtn.click(); // 既存の名前編集UIを開く。確定(blur)時に saveNameEdit → resumePendingParticipantDialog
+}
+
+function resumePendingParticipantDialog() {
+  const pending = state.pendingParticipantOpen;
+  state.pendingParticipantOpen = null;
+  if (!pending || !state.myName) return;
+  openParticipantDialog(pending.eventId, pending.status, null);
+}
+
+// editRow が null なら新規登録（名前は編集可・初期値は自分の名前）。あれば既存行の編集（名前は読み取り専用・参加区分を切り替え可）
+function openParticipantDialog(eventId, status, editRow) {
+  state.participantDialog = { eventId, status, editing: Boolean(editRow) };
+
+  els.participantTitle.textContent = editRow
+    ? '参加登録を編集'
+    : status === 'going'
+      ? '参加として登録'
+      : '不参加として登録';
+
+  els.participantStatusGroup.classList.toggle('hidden', !editRow);
+  for (const radio of els.participantStatusRadios) {
+    radio.checked = editRow ? radio.value === editRow.status : false;
+  }
+
+  els.participantName.value = editRow ? editRow.participant_name : state.myName;
+  els.participantName.readOnly = Boolean(editRow);
+  els.participantComment.value = editRow?.comment || '';
+  updateCommentCount();
+  updateProxyNote();
+  els.participantError.textContent = '';
+  els.participantDialog.showModal();
+}
+
+function updateCommentCount() {
+  const remaining = Math.max(0, PARTICIPANT_COMMENT_MAX - els.participantComment.value.length);
+  els.participantCommentCount.textContent = `残り${remaining}文字`;
+}
+
+// 名前が自分と違うときだけ「代理登録」と明示する
+function updateProxyNote() {
+  const name = els.participantName.value.trim();
+  const isProxy = Boolean(name) && name !== state.myName;
+  els.participantProxyNote.classList.toggle('hidden', !isProxy);
+  els.participantProxyNote.textContent = isProxy ? `代理登録になります（登録者: ${state.myName}）` : '';
+}
+
+function bindParticipantDialogEvents() {
+  els.participantForm.addEventListener('submit', handleParticipantSubmit);
+  els.participantCancel.addEventListener('click', () => els.participantDialog.close());
+  els.participantName.addEventListener('input', updateProxyNote);
+  els.participantComment.addEventListener('input', updateCommentCount);
+}
+
+async function handleParticipantSubmit(event) {
+  event.preventDefault();
+  els.participantError.textContent = '';
+
+  const ctx = state.participantDialog;
+  const name = els.participantName.value.trim();
+  const comment = els.participantComment.value.trim();
+  if (!name) {
+    els.participantError.textContent = 'お名前を入力してください';
+    return;
+  }
+  if ([...comment].length > PARTICIPANT_COMMENT_MAX) {
+    els.participantError.textContent = `コメントは${PARTICIPANT_COMMENT_MAX}文字以内で入力してください`;
+    return;
+  }
+
+  // 編集時は選択中の参加区分、新規時は押した大ボタンの区分
+  const checked = [...els.participantStatusRadios].find((radio) => radio.checked);
+  const status = ctx.editing && checked ? checked.value : ctx.status;
+
+  const payload = {
+    event_id: ctx.eventId,
+    participant_name: name,
+    status,
+    registered_by: state.myName, // 必ず操作者本人の名前
+    password: state.password,
+  };
+  // 編集時は空欄=コメント消去として送る。新規時は空欄なら送らない（同名の既存行のコメントを消さないため）
+  if (ctx.editing || comment) payload.comment = comment;
+
+  els.participantSubmit.disabled = true; // 連打による二重送信を防ぐ
+  try {
+    await api.joinEvent(payload);
+    els.participantDialog.close();
+    await refreshCurrentEvents();
+  } catch (err) {
+    els.participantError.textContent = err.message; // 409 を含め、APIの日本語メッセージをそのまま表示
+  } finally {
+    els.participantSubmit.disabled = false;
+  }
 }
 
 function createActionsRow(event, card) {
@@ -933,7 +1113,9 @@ function createActionsRow(event, card) {
   row.className = 'event-actions';
 
   const canEdit = state.role === 'admin' || event.poster_name === state.myName;
-  const isParticipant = event.participants.some((p) => p.participant_name === state.myName);
+  const isParticipant = event.participants.some(
+    (p) => p.participant_name === state.myName && p.status === 'going'
+  );
   const canFinish = canEdit || isParticipant;
 
   if (!canEdit && !canFinish) return row;

@@ -176,6 +176,43 @@
   </form>
 </dialog>
 
+<dialog id="participant-dialog" class="csv-export-dialog">
+  <form id="participant-form" class="csv-export-form">
+    <h2 id="participant-dialog-title" class="csv-export-title"></h2>
+
+    <fieldset id="participant-status-group" class="csv-export-type-group hidden">
+      <legend>参加区分</legend>
+      <label class="csv-export-radio-label">
+        <input type="radio" name="participant-status" value="going" />
+        ✅ 参加
+      </label>
+      <label class="csv-export-radio-label">
+        <input type="radio" name="participant-status" value="not_going" />
+        ❌ 不参加
+      </label>
+    </fieldset>
+
+    <label>
+      お名前
+      <input type="text" id="participant-name" maxlength="50" />
+    </label>
+    <p id="participant-proxy-note" class="participant-proxy-note hidden"></p>
+
+    <label>
+      コメント（任意）
+      <textarea id="participant-comment" rows="3" maxlength="200"></textarea>
+    </label>
+    <p id="participant-comment-count" class="participant-comment-count">残り200文字</p>
+
+    <p id="participant-error" class="form-error"></p>
+
+    <div class="csv-export-actions">
+      <button type="button" id="participant-cancel" class="btn btn-outline">キャンセル</button>
+      <button type="submit" id="participant-submit" class="btn btn-primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
