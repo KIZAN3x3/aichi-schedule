@@ -62,12 +62,32 @@ create table if not exists public.participants (
   id                uuid primary key default gen_random_uuid(),
   event_id          uuid not null references public.events (id) on delete cascade,
   participant_name  text not null,
-  created_at        timestamptz not null default now()
+  created_at        timestamptz not null default now(),
+  status            text not null default 'going'
+                      constraint participants_status_check check (status in ('going', 'not_going')),
+  comment           text
+                      constraint participants_comment_length_check check (comment is null or char_length(comment) <= 200),
+  -- ※ btrim の文字集合 E' \t\r\n　' の末尾は全角スペース(U+3000)の実文字（0013 と同一）
+  registered_by     text
+                      constraint participants_registered_by_check check (
+                        registered_by is null
+                        or (
+                          registered_by = btrim(registered_by, E' \t\r\n　')
+                          and char_length(registered_by) between 1 and 50
+                        )
+                      ),
+  constraint participants_event_id_participant_name_key unique (event_id, participant_name)
 );
 
 comment on table public.participants is '予定ごとの参加者（自己申告名）';
+comment on column public.participants.status is '参加区分: going=参加 / not_going=不参加';
+comment on column public.participants.comment is '参加者ごとの個別コメント（任意・200文字以内）';
+comment on column public.participants.registered_by is 'この参加登録を最初に行った人の名前（代理登録対応）。NULL=従来データ（本人登録として扱う）';
 
 create index if not exists idx_participants_event_id on public.participants (event_id);
+
+-- Realtime の UPDATE/DELETE イベントの payload.old に全カラムを載せる（既定では主キーのみ）
+alter table public.participants replica identity full;
 
 -- ------------------------------------------------------------
 -- equipment: 全体共通の備品管理（支部の区別なし）
