@@ -7,6 +7,8 @@
   --text: #2b2119;
   --text-muted: #8a7a6d;
   --border: #ecdcc8;
+  /* カードの輪郭用。--borderより一段落ち着いた濃さ（白地のパネル上で境目を出すため） */
+  --border-strong: #e2cdb2;
   --danger: #d1453b;
   --detail-bg: rgba(224, 89, 10, 0.1);
 }
@@ -576,7 +578,7 @@ body {
 .event-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .my-events-view {
@@ -626,9 +628,14 @@ body {
 }
 
 .event-card {
-  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border: 1px solid var(--border-strong);
+  /* 左端はカテゴリ色のアクセント。--event-accent はJSがカードごとに設定する
+     （未設定＝カテゴリなしの予定は、アプリ標準のオレンジにフォールバック） */
+  border-left: 4px solid var(--event-accent, var(--orange-light));
   border-radius: 10px;
   padding: 12px;
+  box-shadow: 0 1px 2px rgba(43, 33, 25, 0.05), 0 4px 14px rgba(43, 33, 25, 0.10);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -637,6 +644,7 @@ body {
 .event-card.is-finished {
   opacity: 0.7;
   background: #faf7f2;
+  box-shadow: none;
 }
 
 .finished-badge {
@@ -653,8 +661,9 @@ body {
 }
 
 @keyframes event-card-flash {
-  0% { box-shadow: 0 0 0 3px var(--orange-mid); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+  /* カード本体の影を両端に含める。含めないと点滅中だけ影が消えて浮きが失われる */
+  0% { box-shadow: 0 0 0 3px var(--orange-mid), 0 4px 14px rgba(43, 33, 25, 0.10); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0), 0 4px 14px rgba(43, 33, 25, 0.10); }
 }
 
 .event-card-editing {
@@ -714,6 +723,63 @@ body {
   flex-direction: column;
   gap: 10px;
   margin-top: 4px;
+}
+
+/* 参加者0人時の「まだ参加者はいません」。共通の.hint-text(padding: 12px 0)は
+   他画面の空状態表示と共有のため変更せず、ここだけ上下の余白を詰める */
+.participants-section > .hint-text {
+  padding: 2px 0;
+}
+
+.participants-accordion {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.participants-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px; /* スマホで押しやすいタップ領域の高さ */
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none; /* 標準の開閉三角マーカーを消し、末尾の.participants-summary-chevronで代替する */
+  font-size: 14px;
+}
+
+.participants-summary::-webkit-details-marker {
+  display: none;
+}
+
+.participants-summary-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.participants-summary-mine {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--orange-dark);
+  white-space: nowrap;
+}
+
+.participants-summary-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.participants-accordion[open] .participants-summary-chevron {
+  transform: rotate(180deg);
+}
+
+.participants-accordion-body {
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .participant-group {

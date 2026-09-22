@@ -45,6 +45,7 @@ const state = {
   branchCategoryOptions: [],
   participantDialog: null, // { eventId, status, editing }
   pendingParticipantOpen: null, // 名前未設定で大ボタンを押した場合の再開用 { eventId, status }
+  participantsOpen: new Set(), // 開いている予定カードのevent_id（再描画をまたいで開閉状態を保持）
 };
 
 const els = {
@@ -837,6 +838,8 @@ function createEventCard(event) {
   const card = document.createElement('article');
   card.className = 'event-card';
   card.dataset.eventId = event.id;
+  // 左端のアクセントライン用。カテゴリなしの予定はCSS側のフォールバック色を使う
+  if (event.category) card.style.setProperty('--event-accent', colorForCategory(event.category));
   if (event.finished_at) {
     card.classList.add('is-finished');
   }
@@ -902,9 +905,10 @@ function createParticipantsSection(event) {
   const going = sorted.filter((p) => p.status === 'going');
   const notGoing = sorted.filter((p) => p.status === 'not_going');
 
-  section.appendChild(createParticipantGroup(event, '参加', going, 'going'));
-  if (notGoing.length > 0) {
-    section.appendChild(createParticipantGroup(event, '不参加', notGoing, 'not_going'));
+  if (sorted.length === 0) {
+    section.appendChild(hintEl('まだ参加者はいません'));
+  } else {
+    section.appendChild(createParticipantsAccordion(event, going, notGoing));
   }
 
   const buttons = document.createElement('div');
@@ -924,13 +928,67 @@ function createParticipantsSection(event) {
   return section;
 }
 
+// 閉じた状態は1行のサマリー（「参加 N名 ・ 不参加 N名 ・ 💬コメント数」）のみ表示し、
+// タップで開くとこれまでの参加/不参加グループ表示が中に入る
+function createParticipantsAccordion(event, going, notGoing) {
+  const details = document.createElement('details');
+  details.className = 'participants-accordion';
+  details.open = state.participantsOpen.has(event.id); // 再描画をまたいで開閉状態を復元
+
+  details.addEventListener('toggle', () => {
+    if (details.open) {
+      state.participantsOpen.add(event.id);
+    } else {
+      state.participantsOpen.delete(event.id);
+    }
+  });
+
+  const summary = document.createElement('summary');
+  summary.className = 'participants-summary';
+
+  const text = document.createElement('span');
+  text.className = 'participants-summary-text';
+  const commentCount = [...going, ...notGoing].filter((p) => p.comment).length;
+  const parts = [];
+  if (going.length > 0) parts.push(`参加 ${going.length}名`);
+  if (notGoing.length > 0) parts.push(`不参加 ${notGoing.length}名`);
+  if (commentCount > 0) parts.push(`💬${commentCount}`);
+  text.textContent = parts.join(' ・ ');
+  summary.appendChild(text);
+
+  const myRow = [...going, ...notGoing].find((p) => p.participant_name === state.myName);
+  if (myRow) {
+    const mine = document.createElement('span');
+    mine.className = 'participants-summary-mine';
+    mine.textContent = `あなた：${myRow.status === 'going' ? '参加' : '不参加'}`;
+    summary.appendChild(mine);
+  }
+
+  const chevron = document.createElement('span');
+  chevron.className = 'participants-summary-chevron';
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.textContent = '▼';
+  summary.appendChild(chevron);
+  details.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.className = 'participants-accordion-body';
+  body.appendChild(createParticipantGroup(event, '参加', going, 'going'));
+  if (notGoing.length > 0) {
+    body.appendChild(createParticipantGroup(event, '不参加', notGoing, 'not_going'));
+  }
+  details.appendChild(body);
+
+  return details;
+}
+
 function createParticipantGroup(event, title, rows, status) {
   const group = document.createElement('div');
   group.className = `participant-group participant-group-${status}`;
 
   const heading = document.createElement('p');
   heading.className = 'participant-group-title';
-  heading.textContent = `${title} ${rows.length}名`;
+  heading.textContent = title; // 人数はアコーディオンのサマリー行に出るため、ここでは付けない
   group.appendChild(heading);
 
   if (rows.length === 0) {
