@@ -151,7 +151,10 @@ body {
 
 .app-title {
   margin: 0;
-  font-size: 22px;
+  font-size: clamp(18px, 5vw, 22px);
+  /* CJKは既定でどの文字間でも折り返せてしまうため、それを禁止し、
+     本文中の<wbr>（「スケジュール」と「＆備品管理」の間）だけを改行候補にする */
+  word-break: keep-all;
 }
 
 .status-bar {
@@ -697,6 +700,17 @@ body {
   font-size: 17px;
 }
 
+.event-place-link {
+  color: var(--orange-dark);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.event-place-link::before {
+  content: '📍 ';
+}
+
 .category-badge {
   color: #fff;
   font-size: 13px;
@@ -710,6 +724,13 @@ body {
   font-size: 16px;
   line-height: 1.5;
   white-space: pre-wrap;
+  overflow-wrap: anywhere; /* リンクの短縮表示文字列でもカードからはみ出さないよう保険をかける */
+}
+
+.content-link {
+  color: var(--orange-dark);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
 }
 
 .event-poster {

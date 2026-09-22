@@ -834,6 +834,79 @@ function hintEl(text) {
   return p;
 }
 
+// http:// / https:// のみを対象。正規表現がこの2語をリテラルで要求するため、
+// javascript: 等の他スキームは構造的にマッチしない
+const URL_RE = /https?:\/\/\S+/g;
+// URLの末尾に文が続く場合（「。」「、」「）」等）に誤って取り込まないよう、末尾から除去する
+const URL_TRAILING_TRIM_RE = /[)\]}>,.;:!?、。」』】　]+$/;
+const URL_DISPLAY_MAX = 40;
+const MAPS_HOST_RE = /^https?:\/\/(www\.)?(maps\.app\.goo\.gl|goo\.gl\/maps|(maps\.)?google\.[a-z.]+\/maps|maps\.google\.[a-z.]+)/i;
+const MAP_EXCLUDED_PLACES = new Set(['未定']);
+
+// テキスト中のURLを<a>に、それ以外はテキストノードのまま container に流し込む。
+// innerHTMLは使わないため、入力文字列がHTMLとして解釈されることはない
+function linkifyInto(container, text) {
+  if (!text) return;
+  let lastIndex = 0;
+  let match;
+  URL_RE.lastIndex = 0;
+  while ((match = URL_RE.exec(text))) {
+    const start = match.index;
+    let url = match[0];
+    const trimmed = url.match(URL_TRAILING_TRIM_RE);
+    if (trimmed) url = url.slice(0, url.length - trimmed[0].length);
+    if (!url) continue;
+
+    if (start > lastIndex) {
+      container.appendChild(document.createTextNode(text.slice(lastIndex, start)));
+    }
+    container.appendChild(createUrlLink(url));
+    lastIndex = start + url.length;
+    URL_RE.lastIndex = lastIndex; // 末尾を削った分、次の検索開始位置を巻き戻す
+  }
+  if (lastIndex < text.length) {
+    container.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+}
+
+function shortenUrlForDisplay(url) {
+  if (MAPS_HOST_RE.test(url)) {
+    return '🔗 地図リンクを開く'; // 座標付きの長いURLをそのまま出さない。場所名リンクの📍と区別する文言
+  }
+  if (url.length <= URL_DISPLAY_MAX) return url;
+  return `${url.slice(0, 28)}…${url.slice(-8)}`; // 先頭28字+末尾8字だけ見せる（hrefは短縮しない）
+}
+
+function createUrlLink(url) {
+  const a = document.createElement('a');
+  a.href = url; // href は必ず元のURLそのまま
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.className = 'content-link';
+  a.textContent = shortenUrlForDisplay(url);
+  a.addEventListener('click', (e) => e.stopPropagation()); // カード側の将来のクリック処理と衝突させない
+  return a;
+}
+
+// 場所名からGoogleマップ検索を開く要素を作る。空欄・「未定」はリンク化しない
+function createPlaceElement(place) {
+  const trimmed = (place || '').trim();
+  if (!trimmed || MAP_EXCLUDED_PLACES.has(trimmed)) {
+    const span = document.createElement('span');
+    span.className = 'event-place';
+    span.textContent = place;
+    return span;
+  }
+  const a = document.createElement('a');
+  a.className = 'event-place event-place-link';
+  a.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(trimmed)}`;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = place;
+  a.addEventListener('click', (e) => e.stopPropagation());
+  return a;
+}
+
 function createEventCard(event) {
   const card = document.createElement('article');
   card.className = 'event-card';
@@ -854,9 +927,7 @@ function createEventCard(event) {
   time.textContent = event.end_time
     ? `${event.time.slice(0, 5)}〜${event.end_time.slice(0, 5)}`
     : event.time.slice(0, 5);
-  const place = document.createElement('span');
-  place.className = 'event-place';
-  place.textContent = event.place;
+  const place = createPlaceElement(event.place);
   header.appendChild(time);
   header.appendChild(place);
   if (event.finished_at) {
@@ -869,7 +940,7 @@ function createEventCard(event) {
 
   const content = document.createElement('p');
   content.className = 'event-content';
-  content.textContent = event.content;
+  linkifyInto(content, event.content);
   card.appendChild(content);
 
   const poster = document.createElement('p');
@@ -1056,7 +1127,7 @@ function createParticipantRow(event, p) {
   if (p.comment) {
     const comment = document.createElement('span');
     comment.className = 'participant-comment';
-    comment.textContent = p.comment;
+    linkifyInto(comment, p.comment);
     row.appendChild(comment);
   }
   return row;
