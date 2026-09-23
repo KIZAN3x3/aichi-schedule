@@ -425,9 +425,11 @@ async function refreshEvents() {
   }
   renderLoadingState();
 
+  // coordinations!coordinations_decided_event_id_fkey(id): この予定が日程調整の決定で
+  // 作られたものなら、元になった調整のidが1件だけ入る（無ければ空配列）
   const { data, error } = await state.supabase
     .from('events')
-    .select('*, participants(*)')
+    .select('*, participants(*), coordinations!coordinations_decided_event_id_fkey(id)')
     .eq('branch', state.branch)
     .eq('date', state.selectedDate)
     .order('time', { ascending: true });
@@ -947,6 +949,15 @@ function createEventCard(event) {
   poster.className = 'event-poster';
   poster.textContent = `投稿者: ${event.poster_name}`;
   card.appendChild(poster);
+
+  // 日程調整の決定で作られた予定にだけ、元の調整へのリンクを出す
+  if (event.coordinations && event.coordinations.length > 0) {
+    const coordinationLink = document.createElement('a');
+    coordinationLink.href = `coordination.html?id=${event.coordinations[0].id}`;
+    coordinationLink.className = 'event-coordination-link';
+    coordinationLink.textContent = '📅 元の日程調整を見る';
+    card.appendChild(coordinationLink);
+  }
 
   card.appendChild(createParticipantsSection(event));
   card.appendChild(createActionsRow(event, card));

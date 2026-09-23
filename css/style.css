@@ -739,6 +739,14 @@ body {
   color: var(--text-muted);
 }
 
+.event-coordination-link {
+  display: inline-block;
+  font-size: 13px;
+  color: var(--orange-dark);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
 .participants-section {
   display: flex;
   flex-direction: column;
