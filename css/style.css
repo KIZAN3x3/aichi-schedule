@@ -1515,3 +1515,563 @@ body {
   color: var(--text-muted);
   text-align: right;
 }
+
+/* ============================================================
+   日程調整（coordination.html）
+   ============================================================ */
+
+.coordination-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* coordination.htmlの<main>にだけ付与し、.app-main本体は変更せずPCでの最大幅を広げる。
+   スマホ幅では画面自体が960pxより狭いため、この上限値は実質的に効かず見た目は変わらない */
+.coordination-app-main {
+  max-width: 960px;
+}
+
+/* 予定カード(.event-card)と同じ影・角丸・枠線で揃える */
+.coordination-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--orange-light);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 1px 2px rgba(43, 33, 25, 0.05), 0 4px 14px rgba(43, 33, 25, 0.10);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.coordination-card-header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.coordination-title {
+  margin: 0;
+  font-size: 18px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.coordination-status-open {
+  background: var(--orange-light);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.coordination-meta {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.coordination-deadline {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.coordination-decided-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--detail-bg);
+  border-radius: 8px;
+}
+
+.coordination-decided-text {
+  margin: 0;
+  font-weight: 700;
+  color: var(--orange-dark);
+}
+
+.coordination-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.coordination-copy-fallback {
+  width: 100%;
+  min-height: 90px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  resize: vertical;
+}
+
+.coordination-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 削除は「回答する」から離し、カード右下に小さな文字リンクとして置く
+   （回答の取消ボタンと誤タップしないようにするため。中身はbutton要素のまま） */
+.coordination-delete-link-wrap {
+  text-align: right;
+  margin-top: 4px;
+}
+
+.coordination-delete-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--danger);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.coordination-not-found {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* 候補×回答者のアコーディオン（参加者アコーディオンと同じ開閉の考え方） */
+.coordination-accordion {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.coordination-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 14px;
+}
+
+.coordination-summary::-webkit-details-marker {
+  display: none;
+}
+
+.coordination-summary-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.coordination-summary-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.coordination-accordion[open] .coordination-summary-chevron {
+  transform: rotate(180deg);
+}
+
+.coordination-accordion-body {
+  padding: 0 10px 10px;
+}
+
+/* 候補×回答者の表。行＝候補日、列＝回答者。
+   候補日・〇・△・✕の4列はposition:stickyで固定し、回答者の列だけが横スクロールする。
+   外側の角丸の枠はここだけが持つ（.coordination-table自身には外枠を付けない。二重の箱に
+   見えてしまうため）。display:inline-blockにして表の実際の幅ぶんだけに縮め、
+   回答者が少ないうちは右側に余白ができないようにする（多い時はmax-widthで
+   親幅いっぱいに収まり、overflow-xで横スクロールする） */
+.coordination-table-wrap {
+  /* 表のマス目・外枠専用の、はっきりめのグレー（var(--border)本体は変えず、ここだけ上書きする）。
+   子要素からもvar(--coordination-border)としてそのまま参照できる */
+  --coordination-border: #d5d0cb;
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--coordination-border);
+  border-radius: 6px;
+}
+
+/* border-collapse:collapseだと、横スクロール中にsticky列の罫線が消える/ずれることがあるため、
+   separate + border-spacing:0 にし、罫線は各セル自身のborder-right/bottomで描く
+   （マス目状に見せつつ、sticky列でも自分の罫線を保持できる）。
+   表自体には外枠を付けない（.coordination-table-wrapの枠と重なって右端・下端が
+   2px太く見えてしまうため。外枠は.coordination-table-wrap側だけが持つ） */
+.coordination-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.coordination-table th,
+.coordination-table td {
+  padding: 6px 10px;
+  border-right: 1px solid var(--coordination-border);
+  border-bottom: 1px solid var(--coordination-border);
+  text-align: center;
+}
+
+/* 最後の列・最終行はセル自身の罫線を外す。付けたままだと、外側の.coordination-table-wrapの
+   枠と同じ位置に重なり、そこだけ2px太く見えてしまうため */
+.coordination-table tr > :last-child {
+  border-right: none;
+}
+
+.coordination-table tbody tr:last-child > * {
+  border-bottom: none;
+}
+
+.coordination-table thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+  vertical-align: top;
+}
+
+/* 固定4列（候補日・〇・△・✕）。left値は左からの累積幅に合わせて手打ちしている
+   （候補日96px、〇△✕各28px）。4列とも背景色を明示しないと、sticky状態で
+   下を横スクロールする回答者セルが透けて見えてしまう */
+.coordination-col-date,
+.coordination-col-count {
+  position: sticky;
+  background: #fff;
+}
+
+/* 固定4列どうしの縦線はborder-rightではなくbox-shadowで、右側（次の列にはみ出す向き）に描く。
+   下のz-indexは「左の列ほど手前」なので、右向きの影を出す側（＝各列自身）は常に
+   影がはみ出す先の右隣より手前になり、右隣の不透明な背景に上書きされずに残る。
+   （逆に左向きに描くと、影が届く先の左隣の方が手前になり隠れてしまうため、右向きにしている） */
+.coordination-table .coordination-col-date,
+.coordination-table .coordination-col-count-yes,
+.coordination-table .coordination-col-count-maybe {
+  border-right: none;
+  box-shadow: 1px 0 0 var(--coordination-border);
+}
+
+/* ✕列は左側の区切り線を付けず、右端＝回答者列との境目の強調線（2px）だけにする。
+   強調線なので、表の罫線色（--coordination-border）より一段濃いグレーにする */
+.coordination-table .coordination-col-count-no {
+  border-right: none;
+  box-shadow: 2px 0 0 #b0a59a;
+}
+
+/* 念のため、固定4列に左から順に小さくなるz-indexを振り、
+   左の列ほど必ず手前に来るようにする（左側の影が右隣に隠れないための保険） */
+.coordination-col-date {
+  z-index: 4;
+}
+
+.coordination-col-count-yes {
+  z-index: 3;
+}
+
+.coordination-col-count-maybe {
+  z-index: 2;
+}
+
+.coordination-col-count-no {
+  z-index: 1;
+}
+
+thead .coordination-col-date {
+  z-index: 14; /* ヘッダーは本文セルより常に手前（+10）にする */
+}
+
+thead .coordination-col-count-yes {
+  z-index: 13;
+}
+
+thead .coordination-col-count-maybe {
+  z-index: 12;
+}
+
+thead .coordination-col-count-no {
+  z-index: 11;
+}
+
+.coordination-col-date {
+  left: 0;
+  width: 96px;
+  min-width: 96px;
+  text-align: left;
+  white-space: normal;
+  padding-left: 8px;
+  padding-right: 4px;
+}
+
+/* 日付と時刻を2段表示にする（例: 1段目「9/23（水）」、2段目「18:00」） */
+.coordination-col-date-line1 {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.coordination-col-date-line2 {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.coordination-col-count {
+  width: 28px;
+  min-width: 28px;
+  padding-left: 2px;
+  padding-right: 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.coordination-table thead th.coordination-col-count {
+  font-size: 13px; /* 見出しの〇△✕記号は数字よりわずかに大きく保つ */
+}
+
+.coordination-col-count-yes {
+  left: 96px;
+}
+
+.coordination-col-count-maybe {
+  left: 124px;
+}
+
+.coordination-col-count-no {
+  left: 152px;
+}
+
+/* 〇が最多の候補の行全体を薄いオレンジで目立たせる。固定4列は明示的に背景色を
+   上書きしないと、sticky状態では行のbackgroundが透けて反映されないため個別に指定する */
+.coordination-row-top {
+  background: #fdeee0;
+}
+
+.coordination-row-top .coordination-col-date,
+.coordination-row-top .coordination-col-count {
+  background: #fdeee0;
+}
+
+/* 回答者の列は全員同じ96px固定幅（回答者が少ないうちは横スクロールなしで収まる）。
+   表全体のwhite-space:nowrapをここだけnormalに戻し、区切りのない長い名前でも
+   .participant-nameのoverflow-wrap:anywhereで折り返させ、列からはみ出さないようにする */
+.coordination-col-responder {
+  width: 96px;
+  min-width: 96px;
+  vertical-align: top;
+  white-space: normal;
+  padding: 8px 4px;
+}
+
+.coordination-col-responder .participant-name,
+.coordination-col-responder .participant-registered-by {
+  display: block;
+}
+
+/* 回答者の名前＝リンク風の押せるボタン（編集できる本人/代理登録者の行のみ）。
+   .participant-nameは触らず、専用クラスで見た目をそろえる。
+   普段は下線なし・オレンジ太字のみにし、ホバー時だけ実線の下線を出す。
+   フォーカス時の枠線は上書きせず、ブラウザ標準のoutlineをそのまま使う */
+.coordination-responder-name-btn {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--orange-dark);
+  text-decoration: none;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.coordination-responder-name-btn:hover {
+  text-decoration: underline;
+  text-decoration-style: solid;
+}
+
+/* 表の上に添える「名前をタップすると回答を編集できます」の案内文 */
+.coordination-table-hint {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.coordination-col-mark {
+  width: 96px;
+  min-width: 96px;
+  padding: 4px 10px;
+}
+
+.coordination-mark {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.coordination-mark-yes {
+  color: var(--orange-dark);
+}
+
+.coordination-mark-maybe {
+  color: var(--orange-light);
+}
+
+.coordination-mark-no {
+  color: #c2b6a8; /* --text-mutedより明るい、アプリの配色に馴染む薄いグレー */
+}
+
+.coordination-mark-none {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--border);
+}
+
+.coordination-response-comment {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+}
+
+/* 調整の作成フォーム：候補日時の可変リスト */
+.coordination-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.coordination-candidate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.coordination-candidate-row input {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.coordination-candidate-date {
+  flex: 1;
+  min-width: 0;
+}
+
+.coordination-candidate-time {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 回答ダイアログの「取消」：margin-right:autoで左側に押し出す。
+   非表示(.hidden)のときはflowから外れるため、キャンセル・保存の2つだけの
+   ときの右寄せ配置（.csv-export-actionsの既定）には影響しない */
+.coordination-answer-delete {
+  margin-right: auto;
+}
+
+/* 回答ダイアログ：候補ごとの〇△✕ */
+.coordination-answer-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.coordination-answer-candidate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.coordination-answer-candidate-label {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.coordination-answer-candidate-marks {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+/* 見た目は「〇/△/✕の記号ボタン」だが、中身はネイティブのradioのまま。
+   inputは透明にして44px角いっぱいに重ね、クリック領域・キーボード操作・
+   スクリーンリーダーでの読み上げはすべてネイティブのradio挙動に任せる */
+.coordination-mark-radio-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  cursor: pointer;
+}
+
+.coordination-mark-radio-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.coordination-mark-radio-symbol {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* キーボードでのフォーカス時に枠を表示する（:focus-withinはinputが透明でも効く） */
+.coordination-mark-radio-label:focus-within {
+  outline: 2px solid var(--orange-dark);
+  outline-offset: 2px;
+}
+
+/* 選択中：表の配色（.coordination-mark-*）と揃えた背景色に、記号は白 */
+.coordination-mark-radio-label-yes.is-checked {
+  background: var(--orange-dark);
+  border-color: var(--orange-dark);
+}
+
+.coordination-mark-radio-label-maybe.is-checked {
+  background: var(--orange-light);
+  border-color: var(--orange-light);
+}
+
+.coordination-mark-radio-label-no.is-checked {
+  background: #a89684;
+  border-color: #a89684;
+}
+
+.coordination-mark-radio-label.is-checked .coordination-mark-radio-symbol {
+  color: #fff;
+}

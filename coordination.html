@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>日程調整 - 愛知活動スケジュール＆備品管理</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div id="boot-loading" class="boot-loading">
+  <div class="boot-loading-spinner"></div>
+</div>
+
+<section id="login-screen" class="login-screen hidden">
+  <div class="login-card">
+    <h1 class="app-title">愛知活動スケジュール<wbr>＆備品管理</h1>
+    <form id="login-form" class="login-form">
+      <label for="password-input">パスワード</label>
+      <input type="password" id="password-input" inputmode="numeric" autocomplete="off" required />
+      <button type="submit" class="btn btn-primary">入る</button>
+      <p id="login-error" class="form-error"></p>
+    </form>
+  </div>
+</section>
+
+<div id="app" class="app hidden">
+  <header class="app-header">
+    <h1 class="app-title">愛知活動スケジュール<wbr>＆備品管理</h1>
+    <div class="status-bar">
+      <span id="role-dot" class="status-dot"></span>
+      <span id="role-text" class="status-role"></span>
+      <span class="status-sep">・</span>
+      <button type="button" id="name-display-btn" class="status-name-btn">
+        <span id="name-display-value">お名前未設定</span>
+      </button>
+      <span id="name-edit-wrap" class="status-name-edit hidden">
+        <input type="text" id="name-input" placeholder="お名前" maxlength="20" />
+      </span>
+      <button type="button" id="logout-btn" class="status-logout-btn" title="ログアウト" aria-label="ログアウト">ログアウト</button>
+    </div>
+  </header>
+
+  <main class="app-main coordination-app-main">
+    <a href="index.html" class="back-link">← スケジュールに戻る</a>
+
+    <section class="panel branch-panel">
+      <label for="branch-select">支部を選択</label>
+      <select id="branch-select">
+        <option value="">-- 支部を選択 --</option>
+      </select>
+    </section>
+
+    <section class="panel">
+      <div class="schedule-panel-header">
+        <h2 class="selected-date-label">日程調整</h2>
+        <button type="button" id="new-coordination-toggle-btn" class="btn btn-primary btn-small">＋ 日程調整を作成</button>
+      </div>
+
+      <form id="coordination-form" class="event-form hidden">
+        <label>
+          タイトル
+          <input type="text" id="coordination-title" placeholder="例：11月度定例会" required />
+        </label>
+
+        <div id="coordination-candidates-list" class="coordination-candidate-list"></div>
+        <button type="button" id="coordination-add-candidate-btn" class="btn btn-outline btn-small">＋ 候補を追加</button>
+
+        <label>
+          場所
+          <input type="text" id="coordination-place" placeholder="場所" required />
+        </label>
+        <label>
+          内容
+          <textarea id="coordination-content" placeholder="内容" required></textarea>
+        </label>
+        <label>
+          回答締切（任意）
+          <input type="date" id="coordination-deadline" />
+        </label>
+        <label>
+          作成者名
+          <input type="text" id="coordination-created-by" placeholder="お名前" required />
+        </label>
+        <p id="coordination-form-error" class="form-error"></p>
+        <button type="submit" class="btn btn-primary">作成する</button>
+      </form>
+
+      <div id="coordination-list" class="coordination-list"></div>
+    </section>
+  </main>
+</div>
+
+<!-- 回答ダイアログ -->
+<dialog id="answer-dialog" class="csv-export-dialog">
+  <form id="answer-form" class="csv-export-form">
+    <h2 id="answer-dialog-title" class="csv-export-title">回答する</h2>
+    <label>
+      お名前
+      <input type="text" id="answer-name" maxlength="50" />
+    </label>
+    <p id="answer-proxy-note" class="participant-proxy-note hidden"></p>
+
+    <div id="answer-candidates-list" class="coordination-answer-candidates"></div>
+
+    <label>
+      コメント（任意）
+      <textarea id="answer-comment" rows="3" maxlength="200"></textarea>
+    </label>
+    <p id="answer-comment-count" class="participant-comment-count">残り200文字</p>
+
+    <p id="answer-error" class="form-error"></p>
+    <div class="csv-export-actions">
+      <button type="button" id="answer-delete" class="btn btn-danger coordination-answer-delete hidden">取消</button>
+      <button type="button" id="answer-cancel" class="btn btn-outline">キャンセル</button>
+      <button type="submit" id="answer-submit" class="btn btn-primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 決定ダイアログ -->
+<dialog id="decide-dialog" class="csv-export-dialog">
+  <form id="decide-form" class="csv-export-form">
+    <h2 class="csv-export-title">この日に決定</h2>
+
+    <div class="event-form-row">
+      <label>
+        開始時刻
+        <input type="time" id="decide-time" required />
+      </label>
+      <label>
+        終了時刻（任意）
+        <input type="time" id="decide-end-time" />
+      </label>
+    </div>
+    <label>
+      場所
+      <input type="text" id="decide-place" required />
+    </label>
+    <label>
+      内容
+      <textarea id="decide-content" required></textarea>
+    </label>
+    <label>
+      カテゴリ
+      <select id="decide-category-select">
+        <option value="">未選択</option>
+      </select>
+    </label>
+    <label id="decide-category-other-wrap" class="hidden">
+      カテゴリ名（自由入力）
+      <input type="text" id="decide-category-other" maxlength="50" />
+    </label>
+    <label>
+      投稿者名
+      <input type="text" id="decide-decided-by" required />
+    </label>
+    <label class="checkbox-label">
+      <input type="checkbox" id="decide-register-yes" checked />
+      〇の人を参加者として登録する
+    </label>
+    <label class="checkbox-label">
+      <input type="checkbox" id="decide-register-maybe" />
+      △の人も参加者として登録する
+    </label>
+
+    <p id="decide-error" class="form-error"></p>
+    <div class="csv-export-actions">
+      <button type="button" id="decide-cancel" class="btn btn-outline">キャンセル</button>
+      <button type="submit" id="decide-submit" class="btn btn-primary">この内容で決定する</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="js/coordination.js"></script>
+</body>
+</html>
