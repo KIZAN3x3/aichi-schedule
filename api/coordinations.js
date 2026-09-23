@@ -4,6 +4,7 @@ const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 
 const MAX_CANDIDATES = 30;
+const CANDIDATE_NOTE_MAX_LENGTH = 50;
 
 // 生のDBエラーをクライアントに返さないための日本語メッセージ変換
 function coordinationErrorResponse(error) {
@@ -18,7 +19,8 @@ function coordinationErrorResponse(error) {
 }
 
 // POST /api/coordinations : 日程調整の新規作成（一般ユーザー・管理者どちらも可）
-//   body: { branch, title, place, content, created_by, reply_deadline?, candidates: [{date, time?}], password }
+//   body: { branch, title, place, content, created_by, reply_deadline?,
+//           candidates: [{date, time?, note?}], password }
 //   coordinations 1行 + coordination_candidates 複数行をまとめて作成する。
 //   候補作成に失敗した場合は、coordinations側も削除して中途半端な行を残さない
 //   （1回のAPI呼び出しで2テーブルへの書き込みが必要だが、DB関数は使わず
@@ -67,7 +69,13 @@ module.exports = async (req, res) => {
       return sendJson(res, 400, { error: '同じ日時の候補が重複しています' });
     }
     seen.add(key);
-    normalizedCandidates.push({ date, time: time || null });
+
+    const note = typeof candidate?.note === 'string' ? candidate.note.trim() : '';
+    if ([...note].length > CANDIDATE_NOTE_MAX_LENGTH) {
+      return sendJson(res, 400, { error: `候補の補足は${CANDIDATE_NOTE_MAX_LENGTH}文字以内で入力してください` });
+    }
+
+    normalizedCandidates.push({ date, time: time || null, note: note || null });
   }
 
   const supabase = getSupabaseClient();
@@ -97,6 +105,7 @@ module.exports = async (req, res) => {
         coordination_id: coordination.id,
         date: c.date,
         time: c.time,
+        note: c.note,
         sort_order: index,
       }))
     )

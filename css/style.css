@@ -1957,6 +1957,7 @@ thead .coordination-col-count-no {
 
 .coordination-candidate-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px;
@@ -1981,6 +1982,11 @@ thead .coordination-col-count-no {
 .coordination-candidate-time {
   flex: 1;
   min-width: 0;
+}
+
+.coordination-candidate-note {
+  flex: 1.5;
+  min-width: 80px;
 }
 
 /* 回答ダイアログの「取消」：margin-right:autoで左側に押し出す。

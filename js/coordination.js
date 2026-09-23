@@ -8,6 +8,7 @@ const ROLE_LABELS = { user: '一般', admin: '管理者' };
 const MARK_LABELS = { yes: '〇', maybe: '△', no: '✕' };
 const MARK_ARIA_LABELS = { yes: '参加できる', maybe: '未定', no: '参加できない' };
 const COMMENT_MAX = 200;
+const CANDIDATE_NOTE_MAX = 50;
 
 // api/*.js への薄いラッパー（js/api.jsのrequest()と同じ実装。このページ単体で完結させるため複製している）
 async function request(path, method, body) {
@@ -738,10 +739,13 @@ function createVoteAccordion(coordination) {
   } else {
     // 回答が0件でも、候補があれば表（と決定行）は表示する。決定は回答が無くても行えるため
     if (responses.length === 0) body.appendChild(hintEl('まだ回答はありません'));
-    const hint = document.createElement('p');
-    hint.className = 'coordination-table-hint';
-    hint.textContent = '名前をタップすると回答を編集できます';
-    body.appendChild(hint);
+    // 案内文は「回答が1件以上あり、かつ調整中（タップで編集できる状態）」のときだけ出す
+    if (responses.length > 0 && coordination.status === 'open') {
+      const hint = document.createElement('p');
+      hint.className = 'coordination-table-hint';
+      hint.textContent = '名前をタップすると回答を編集できます';
+      body.appendChild(hint);
+    }
     body.appendChild(createVoteTable(coordination, candidates, responses, counts, topCandidateIds));
   }
   details.appendChild(body);
@@ -912,6 +916,12 @@ function createCandidateRow() {
   timeInput.className = 'coordination-candidate-time';
   timeInput.placeholder = '時刻（任意）';
 
+  const noteInput = document.createElement('input');
+  noteInput.type = 'text';
+  noteInput.className = 'coordination-candidate-note';
+  noteInput.placeholder = '午前・撮影日 など';
+  noteInput.maxLength = CANDIDATE_NOTE_MAX; // DB側のCHECK制約(50文字)と合わせる
+
   const removeBtn = document.createElement('button');
   removeBtn.type = 'button';
   removeBtn.className = 'btn btn-muted btn-small';
@@ -921,7 +931,7 @@ function createCandidateRow() {
     row.remove();
   });
 
-  row.append(dateInput, timeInput, removeBtn);
+  row.append(dateInput, timeInput, noteInput, removeBtn);
   return row;
 }
 
@@ -953,6 +963,7 @@ async function handleCreateCoordination(event) {
   const candidates = [...els.coordinationCandidatesList.querySelectorAll('.coordination-candidate-row')].map((row) => ({
     date: row.querySelector('.coordination-candidate-date').value,
     time: row.querySelector('.coordination-candidate-time').value || undefined,
+    note: row.querySelector('.coordination-candidate-note').value.trim() || undefined,
   }));
 
   const submitBtn = els.coordinationForm.querySelector('button[type="submit"]');
