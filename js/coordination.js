@@ -28,8 +28,11 @@ async function request(path, method, body) {
 
 const api = {
   createCoordination: (payload) => request('/api/coordinations', 'POST', payload),
-  deleteCoordination: (id, payload) => request(`/api/coordinations/${id}`, 'DELETE', payload),
-  decideCoordination: (id, payload) => request(`/api/coordinations/${id}/decide`, 'POST', payload),
+  // Vercel Hobbyプランの関数数上限のため、api/coordinations/[id].js・[id]/decide.js を
+  // api/coordinations.js に統合した。パス区切りの代わりにクエリ文字列(?id=&action=)で分岐する
+  deleteCoordination: (id, payload) => request(`/api/coordinations?id=${encodeURIComponent(id)}`, 'DELETE', payload),
+  decideCoordination: (id, payload) =>
+    request(`/api/coordinations?id=${encodeURIComponent(id)}&action=decide`, 'POST', payload),
   submitResponse: (payload) => request('/api/coordination-responses', 'POST', payload),
   deleteResponse: (payload) => request('/api/coordination-responses', 'DELETE', payload),
 };
