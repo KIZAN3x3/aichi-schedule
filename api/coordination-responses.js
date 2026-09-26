@@ -28,6 +28,9 @@ function responseErrorResponse(error) {
 //   それ以外は409。参加者機能(api/participants.js)と同じ考え方。
 // DELETE /api/coordination-responses : 回答の取り消し（本人 または 代理登録した人のみ）
 //   body: { coordination_id, participant_name, requested_by, password }
+// 登録・編集・取消はどれも、調整中(status='open')のときだけ受け付ける（決定済みは409）。
+// ※状態の確認と書き込みの間に決定された場合は、その回答が決定済みの調整に残りうる
+//   （数十〜数百ミリ秒の間だけ。データは壊れない。DBトリガーでの厳密な防止は入れていない）
 module.exports = async (req, res) => {
   const { coordination_id, participant_name, password } = req.body || {};
   const role = resolveRole(password);
@@ -39,6 +42,24 @@ module.exports = async (req, res) => {
   }
 
   const supabase = getSupabaseClient();
+
+  if (req.method === 'POST' || req.method === 'DELETE') {
+    const { data: coordination, error: coordinationError } = await supabase
+      .from('coordinations')
+      .select('status')
+      .eq('id', coordination_id)
+      .maybeSingle();
+    if (coordinationError) {
+      const { status, message } = responseErrorResponse(coordinationError);
+      return sendJson(res, status, { error: message });
+    }
+    if (!coordination) {
+      return sendJson(res, 404, { error: '指定された日程調整が見つかりません' });
+    }
+    if (coordination.status !== 'open') {
+      return sendJson(res, 409, { error: 'この日程調整は決定済みのため、回答できません。' });
+    }
+  }
 
   if (req.method === 'POST') {
     const { registered_by, comment, answers } = req.body;
