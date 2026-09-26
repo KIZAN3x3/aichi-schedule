@@ -10,11 +10,13 @@ const MIN_CANDIDATES_MESSAGE =
   '日程調整は候補日を2つ以上入れてください。日にちが決まっている場合は、スケジュール画面から予定として登録してください。';
 const CANDIDATE_NOTE_MAX_LENGTH = 50;
 const CATEGORY_MAX_LENGTH = 50;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Vercel Hobbyプランのサーバーレス関数数上限（12個）を超えないよう、
 // 元は3ファイルだった以下のエンドポイントをこの1ファイルにまとめている。
 // 「/:id」「/:id/decide」というパス区切りの代わりに、クエリ文字列(?id=&action=)で分岐する。
 //   POST   /api/coordinations                     : 新規作成（旧 api/coordinations.js）
+//   PUT    /api/coordinations?id=xxx               : 編集（調整中のときだけ。DB関数update_coordination）
 //   DELETE /api/coordinations?id=xxx               : 削除（旧 api/coordinations/[id].js）
 //   POST   /api/coordinations?id=xxx&action=decide : 決定（旧 api/coordinations/[id]/decide.js）
 // GET /api/coordinations/:id（1件取得）は、フロントのどこからも呼ばれていなかったため統合時に廃止した
@@ -48,6 +50,25 @@ function decideErrorResponse(error) {
   return { status: 500, message: '決定処理に失敗しました。時間をおいて再度お試しください' };
 }
 
+// DB関数update_coordinationが投げる想定内のエラーを日本語のまま伝える。
+//   P0001: 決定済み・見つからない（409）／P0003: 入力の不備（400）／P0004: ほかの人の編集と衝突（409）
+function updateErrorResponse(error) {
+  if (error.code === 'P0001' || error.code === 'P0004') {
+    return { status: 409, message: error.message };
+  }
+  if (error.code === 'P0003') {
+    return { status: 400, message: error.message };
+  }
+  if (error.code === '22007' || error.code === '22008') {
+    return { status: 400, message: '日付または時刻の形式が正しくありません' };
+  }
+  if (error.code === '22P02') {
+    return { status: 400, message: '入力内容の形式が正しくありません' };
+  }
+  console.error('update_coordination failed:', error);
+  return { status: 500, message: '日程調整の保存に失敗しました。時間をおいて再度お試しください' };
+}
+
 module.exports = async (req, res) => {
   const { id, action } = req.query;
 
@@ -57,11 +78,83 @@ module.exports = async (req, res) => {
   if (req.method === 'POST' && id && action === 'decide') {
     return handleDecide(req, res, id);
   }
+  if (req.method === 'PUT' && id) {
+    return handleUpdate(req, res, id);
+  }
   if (req.method === 'DELETE' && id) {
     return handleDelete(req, res, id);
   }
-  return methodNotAllowed(res, ['POST', 'DELETE']);
+  return methodNotAllowed(res, ['POST', 'PUT', 'DELETE']);
 };
+
+// 題名・場所・内容・回答締切の入力チェック（作成と編集で共通）
+function validateCoordinationFields({ title, place, content, reply_deadline }) {
+  const trimmedTitle = typeof title === 'string' ? title.trim() : '';
+  const trimmedPlace = typeof place === 'string' ? place.trim() : '';
+  const trimmedContent = typeof content === 'string' ? content.trim() : '';
+  if (!trimmedTitle || !trimmedPlace || !trimmedContent) {
+    return { error: '必須項目が不足しています' };
+  }
+  const trimmedDeadline = typeof reply_deadline === 'string' ? reply_deadline.trim() : '';
+  return { trimmedTitle, trimmedPlace, trimmedContent, trimmedDeadline };
+}
+
+// 候補日時の入力チェック（作成と編集で共通）。
+//   ・候補は2つ以上（日付が入った候補を「日付|時刻」でまとめて数える。補足だけ違う同じ日時は1件）
+//   ・30件以内、日付は必須、同じ日時の重複なし、補足は50文字以内
+//   ・時刻は「HH:MM」にそろえて比べる（編集時はDBの「HH:MM:SS」が来ることもあるため）
+//   allowId: 編集時だけ、既存の候補のid（uuid）を受け付ける
+function validateCandidates(candidates, { allowId }) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return { error: MIN_CANDIDATES_MESSAGE };
+  }
+  if (candidates.length > MAX_CANDIDATES) {
+    return { error: `候補日時は${MAX_CANDIDATES}件以内にしてください` };
+  }
+  const readDate = (c) => (typeof c?.date === 'string' ? c.date.trim() : '');
+  const readTime = (c) => (typeof c?.time === 'string' ? c.time.trim().slice(0, 5) : '');
+
+  // 下の1件ずつのチェックより先に行い、同じ候補を2つ入れただけの場合も「2つ以上」の文言を返す
+  const uniqueKeys = new Set();
+  for (const candidate of candidates) {
+    const date = readDate(candidate);
+    if (!date) continue;
+    uniqueKeys.add(`${date}|${readTime(candidate)}`);
+  }
+  if (uniqueKeys.size < MIN_CANDIDATES) {
+    return { error: MIN_CANDIDATES_MESSAGE };
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const date = readDate(candidate);
+    if (!date) {
+      return { error: '候補日を入力してください' };
+    }
+    const time = readTime(candidate);
+    const key = `${date}|${time}`;
+    if (seen.has(key)) {
+      return { error: '同じ日時の候補が重複しています' };
+    }
+    seen.add(key);
+
+    const note = typeof candidate?.note === 'string' ? candidate.note.trim() : '';
+    if ([...note].length > CANDIDATE_NOTE_MAX_LENGTH) {
+      return { error: `候補の補足は${CANDIDATE_NOTE_MAX_LENGTH}文字以内で入力してください` };
+    }
+
+    const item = { date, time: time || null, note: note || null };
+    if (allowId && candidate?.id) {
+      if (typeof candidate.id !== 'string' || !UUID_PATTERN.test(candidate.id)) {
+        return { error: '候補の指定が正しくありません' };
+      }
+      item.id = candidate.id;
+    }
+    normalized.push(item);
+  }
+  return { normalized };
+}
 
 // POST /api/coordinations : 日程調整の新規作成（一般ユーザー・管理者どちらも可）
 //   body: { branch, title, place, content, created_by, reply_deadline?,
@@ -80,57 +173,18 @@ async function handleCreate(req, res) {
     return sendJson(res, 400, { error: '支部が不正です' });
   }
 
-  const trimmedTitle = typeof title === 'string' ? title.trim() : '';
-  const trimmedPlace = typeof place === 'string' ? place.trim() : '';
-  const trimmedContent = typeof content === 'string' ? content.trim() : '';
   const trimmedCreatedBy = typeof created_by === 'string' ? created_by.trim() : '';
-  if (!trimmedTitle || !trimmedPlace || !trimmedContent || !trimmedCreatedBy) {
-    return sendJson(res, 400, { error: '必須項目が不足しています' });
+  const fields = validateCoordinationFields({ title, place, content, reply_deadline });
+  if (fields.error || !trimmedCreatedBy) {
+    return sendJson(res, 400, { error: fields.error || '必須項目が不足しています' });
   }
+  const { trimmedTitle, trimmedPlace, trimmedContent, trimmedDeadline } = fields;
 
-  const trimmedDeadline = typeof reply_deadline === 'string' ? reply_deadline.trim() : '';
-
-  if (!Array.isArray(candidates) || candidates.length === 0) {
-    return sendJson(res, 400, { error: MIN_CANDIDATES_MESSAGE });
+  const candidateResult = validateCandidates(candidates, { allowId: false });
+  if (candidateResult.error) {
+    return sendJson(res, 400, { error: candidateResult.error });
   }
-  if (candidates.length > MAX_CANDIDATES) {
-    return sendJson(res, 400, { error: `候補日時は${MAX_CANDIDATES}件以内にしてください` });
-  }
-
-  // 日付が入っている候補を「日付|時刻」でまとめて数える（補足だけ違う同じ日時は1件）。
-  // 下の1件ずつのチェックより先に行い、同じ候補を2つ入れただけの場合も「2つ以上」の文言を返す
-  const uniqueKeys = new Set();
-  for (const candidate of candidates) {
-    const date = typeof candidate?.date === 'string' ? candidate.date.trim() : '';
-    if (!date) continue;
-    const time = typeof candidate?.time === 'string' ? candidate.time.trim() : '';
-    uniqueKeys.add(`${date}|${time}`);
-  }
-  if (uniqueKeys.size < MIN_CANDIDATES) {
-    return sendJson(res, 400, { error: MIN_CANDIDATES_MESSAGE });
-  }
-
-  const normalizedCandidates = [];
-  const seen = new Set();
-  for (const candidate of candidates) {
-    const date = typeof candidate?.date === 'string' ? candidate.date.trim() : '';
-    if (!date) {
-      return sendJson(res, 400, { error: '候補日を入力してください' });
-    }
-    const time = typeof candidate?.time === 'string' ? candidate.time.trim() : '';
-    const key = `${date}|${time}`;
-    if (seen.has(key)) {
-      return sendJson(res, 400, { error: '同じ日時の候補が重複しています' });
-    }
-    seen.add(key);
-
-    const note = typeof candidate?.note === 'string' ? candidate.note.trim() : '';
-    if ([...note].length > CANDIDATE_NOTE_MAX_LENGTH) {
-      return sendJson(res, 400, { error: `候補の補足は${CANDIDATE_NOTE_MAX_LENGTH}文字以内で入力してください` });
-    }
-
-    normalizedCandidates.push({ date, time: time || null, note: note || null });
-  }
+  const normalizedCandidates = candidateResult.normalized;
 
   const supabase = getSupabaseClient();
 
@@ -177,6 +231,69 @@ async function handleCreate(req, res) {
   }
 
   return sendJson(res, 201, { ...coordination, coordination_candidates: candidateRows });
+}
+
+// PUT /api/coordinations?id=xxx : 日程調整の編集（作成者本人 or 管理者のみ。調整中のときだけ）
+//   body: { title, place, content, reply_deadline?, candidates: [{id?, date, time?, note?}], created_by, password }
+//   created_by は操作する人の名前（作成者本人かどうかの判定に使う。作成者名そのものは変更しない）。
+//   候補は、既存の候補ならidを付けて渡す（idの無いものは新規追加、渡されなかった既存の候補は削除）。
+//   調整本体と候補の更新は、DB関数 update_coordination が1トランザクションで行う
+//   （行ロックにより決定処理と同時には走らない。決定済みならP0001で止まる）
+async function handleUpdate(req, res, id) {
+  const { title, place, content, reply_deadline, candidates, created_by, password } = req.body || {};
+  const role = resolveRole(password);
+  if (!role) {
+    return sendJson(res, 401, { error: 'パスワードが違います' });
+  }
+  const operator = typeof created_by === 'string' ? created_by.trim() : '';
+  if (!operator) {
+    return sendJson(res, 400, { error: 'created_byが必要です' });
+  }
+  if (!UUID_PATTERN.test(id)) {
+    return sendJson(res, 400, { error: 'IDの形式が正しくありません' });
+  }
+
+  const supabase = getSupabaseClient();
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('coordinations')
+    .select('created_by, status')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchError || !existing) {
+    return sendJson(res, 404, { error: '日程調整が見つかりません' });
+  }
+  if (role !== 'admin' && existing.created_by !== operator) {
+    return sendJson(res, 403, { error: '作成者本人のみ編集できます' });
+  }
+  // 画面で分かりやすい文言を返すための事前チェック。
+  // 最終的な判定は、DB関数が行ロックを取ってから行う（この間に決定された場合もP0001で止まる）
+  if (existing.status !== 'open') {
+    return sendJson(res, 409, { error: '決定済みの日程調整は編集できません' });
+  }
+
+  const fields = validateCoordinationFields({ title, place, content, reply_deadline });
+  if (fields.error) {
+    return sendJson(res, 400, { error: fields.error });
+  }
+  const candidateResult = validateCandidates(candidates, { allowId: true });
+  if (candidateResult.error) {
+    return sendJson(res, 400, { error: candidateResult.error });
+  }
+
+  const { error } = await supabase.rpc('update_coordination', {
+    p_coordination_id: id,
+    p_title: fields.trimmedTitle,
+    p_place: fields.trimmedPlace,
+    p_content: fields.trimmedContent,
+    p_reply_deadline: fields.trimmedDeadline || null,
+    p_candidates: candidateResult.normalized,
+  });
+  if (error) {
+    const { status, message } = updateErrorResponse(error);
+    return sendJson(res, status, { error: message });
+  }
+  return sendJson(res, 200, { id });
 }
 
 // DELETE /api/coordinations?id=xxx : 日程調整の削除（作成者本人 or 管理者のみ）

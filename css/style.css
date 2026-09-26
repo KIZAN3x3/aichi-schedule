@@ -2002,10 +2002,11 @@ thead .coordination-col-count-no {
   color: #c2b6a8; /* --text-mutedより明るい、アプリの配色に馴染む薄いグレー */
 }
 
+/* 未回答（回答後に編集で追加された候補など）の「－」。白地でも見えるよう落ち着いたグレーにする */
 .coordination-mark-none {
   font-size: 14px;
   font-weight: 400;
-  color: var(--border);
+  color: var(--text-muted);
 }
 
 .coordination-response-comment {
@@ -2052,6 +2053,14 @@ thead .coordination-col-count-no {
 .coordination-candidate-row > button {
   justify-self: end;
   align-self: center;
+}
+
+/* 編集ダイアログの注意書き（候補の日時変更・削除で回答が消えること） */
+.coordination-edit-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 /* 回答ダイアログの「取消」：margin-right:autoで左側に押し出す。

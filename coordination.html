@@ -122,6 +122,40 @@
   </form>
 </dialog>
 
+<!-- 編集ダイアログ（調整中のときだけ。作成者本人かマスター管理者） -->
+<dialog id="edit-dialog" class="csv-export-dialog">
+  <form id="edit-form" class="csv-export-form">
+    <h2 class="csv-export-title">日程調整を編集</h2>
+    <label>
+      タイトル
+      <input type="text" id="edit-title" required />
+    </label>
+
+    <div id="edit-candidates-list" class="coordination-candidate-list"></div>
+    <button type="button" id="edit-add-candidate-btn" class="btn btn-outline btn-small">＋ 候補を追加</button>
+    <p class="coordination-edit-note">候補の日付・時刻を変えたり候補を削除したりすると、その候補への回答は消えます。補足だけの変更なら回答は残ります。</p>
+
+    <label>
+      場所
+      <input type="text" id="edit-place" required />
+    </label>
+    <label>
+      内容
+      <textarea id="edit-content" required></textarea>
+    </label>
+    <label>
+      回答締切（任意）
+      <input type="date" id="edit-deadline" />
+    </label>
+
+    <p id="edit-error" class="form-error"></p>
+    <div class="csv-export-actions">
+      <button type="button" id="edit-cancel" class="btn btn-outline">キャンセル</button>
+      <button type="submit" id="edit-submit" class="btn btn-primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- 決定ダイアログ -->
 <dialog id="decide-dialog" class="csv-export-dialog">
   <form id="decide-form" class="csv-export-form">

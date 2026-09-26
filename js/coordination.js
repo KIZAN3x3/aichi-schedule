@@ -34,6 +34,7 @@ const api = {
   createCoordination: (payload) => request('/api/coordinations', 'POST', payload),
   // Vercel Hobbyプランの関数数上限のため、api/coordinations/[id].js・[id]/decide.js を
   // api/coordinations.js に統合した。パス区切りの代わりにクエリ文字列(?id=&action=)で分岐する
+  updateCoordination: (id, payload) => request(`/api/coordinations?id=${encodeURIComponent(id)}`, 'PUT', payload),
   deleteCoordination: (id, payload) => request(`/api/coordinations?id=${encodeURIComponent(id)}`, 'DELETE', payload),
   decideCoordination: (id, payload) =>
     request(`/api/coordinations?id=${encodeURIComponent(id)}&action=decide`, 'POST', payload),
@@ -122,11 +123,23 @@ const els = {
   decideError: document.getElementById('decide-error'),
   decideSubmit: document.getElementById('decide-submit'),
   decideCancel: document.getElementById('decide-cancel'),
+  editDialog: document.getElementById('edit-dialog'),
+  editForm: document.getElementById('edit-form'),
+  editTitle: document.getElementById('edit-title'),
+  editCandidatesList: document.getElementById('edit-candidates-list'),
+  editAddCandidateBtn: document.getElementById('edit-add-candidate-btn'),
+  editPlace: document.getElementById('edit-place'),
+  editContent: document.getElementById('edit-content'),
+  editDeadline: document.getElementById('edit-deadline'),
+  editError: document.getElementById('edit-error'),
+  editSubmit: document.getElementById('edit-submit'),
+  editCancel: document.getElementById('edit-cancel'),
 };
 
 let candidateRowSeq = 0;
 let answerDialogCtx = null; // { coordinationId, coordination, editingResponse }
 let decideDialogCtx = null; // { coordinationId, candidateId }
+let editDialogCtx = null; // { coordinationId }
 
 init();
 
@@ -138,6 +151,7 @@ async function init() {
   bindCoordinationForm();
   bindAnswerDialog();
   bindDecideDialog();
+  bindEditDialog();
   restoreSession();
 }
 
@@ -877,6 +891,16 @@ function createCardActions(coordination) {
     answerBtn.textContent = '📝 回答する';
     answerBtn.addEventListener('click', () => requireMyName(() => openAnswerDialog(coordination, null)));
     row.appendChild(answerBtn);
+
+    // 編集は調整中のときだけ、作成者本人かマスター管理者に出す（決定・削除と同じ判定）
+    if (canManage(coordination)) {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn btn-outline btn-small';
+      editBtn.textContent = '✏️ 編集';
+      editBtn.addEventListener('click', () => openEditDialog(coordination));
+      row.appendChild(editBtn);
+    }
   }
 
   return row;
@@ -1074,46 +1098,79 @@ function makeMarkCell(mark) {
   td.className = 'coordination-col-mark';
   const span = document.createElement('span');
   span.className = `coordination-mark ${mark ? `coordination-mark-${mark}` : 'coordination-mark-none'}`;
-  span.textContent = mark ? MARK_LABELS[mark] : '-';
+  // 回答がない候補（回答後に編集で追加された候補など）は「－」。読み上げと長押しでは「未回答」
+  span.textContent = mark ? MARK_LABELS[mark] : '－';
+  if (!mark) {
+    span.title = '未回答';
+    span.setAttribute('aria-label', '未回答');
+  }
   td.appendChild(span);
   return td;
 }
 
 // ===================== 調整の作成 =====================
 
-function createCandidateRow() {
+// 候補1行（日付・時刻・補足・削除）。作成フォームと編集ダイアログで共通。
+// initial.id があれば既存の候補として data-candidate-id に持つ（編集時にAPIへidを付けて渡すため）
+function createCandidateRow(initial = {}) {
   candidateRowSeq += 1;
   const row = document.createElement('div');
   row.className = 'coordination-candidate-row';
   row.dataset.rowId = String(candidateRowSeq);
+  if (initial.id) row.dataset.candidateId = initial.id;
 
   const dateInput = document.createElement('input');
   dateInput.type = 'date';
   dateInput.className = 'coordination-candidate-date';
   dateInput.required = true;
+  dateInput.value = initial.date || '';
 
   const timeInput = document.createElement('input');
   timeInput.type = 'time';
   timeInput.className = 'coordination-candidate-time';
   timeInput.placeholder = '時刻（任意）';
+  timeInput.value = initial.time ? initial.time.slice(0, 5) : '';
 
   const noteInput = document.createElement('input');
   noteInput.type = 'text';
   noteInput.className = 'coordination-candidate-note';
   noteInput.placeholder = '午前・撮影日 など';
   noteInput.maxLength = CANDIDATE_NOTE_MAX; // DB側のCHECK制約(50文字)と合わせる
+  noteInput.value = initial.note || '';
 
   const removeBtn = document.createElement('button');
   removeBtn.type = 'button';
   removeBtn.className = 'btn btn-muted btn-small';
   removeBtn.textContent = '削除';
   removeBtn.addEventListener('click', () => {
-    if (els.coordinationCandidatesList.children.length <= 1) return; // 最低1件は残す
+    if (row.parentElement && row.parentElement.children.length <= 1) return; // 最低1件は残す
     row.remove();
   });
 
   row.append(dateInput, timeInput, noteInput, removeBtn);
   return row;
+}
+
+// 候補の行を読み取る（作成フォームと編集ダイアログで共通）。既存の候補にはidが付く
+function readCandidateRows(listEl) {
+  return [...listEl.querySelectorAll('.coordination-candidate-row')].map((row) => {
+    const candidate = {
+      date: row.querySelector('.coordination-candidate-date').value,
+      time: row.querySelector('.coordination-candidate-time').value || undefined,
+      note: row.querySelector('.coordination-candidate-note').value.trim() || undefined,
+    };
+    if (row.dataset.candidateId) candidate.id = row.dataset.candidateId;
+    return candidate;
+  });
+}
+
+// 日付が入っている候補を「日付|時刻」でまとめて数え、2つ以上あるか
+// （補足だけ違う同じ日時は1件。API側と同じ数え方。作成と編集で共通）
+function hasEnoughCandidates(candidates) {
+  const uniqueKeys = new Set(
+    candidates.filter((c) => c.date).map((c) => `${c.date}|${c.time ? c.time.slice(0, 5) : ''}`)
+  );
+  return uniqueKeys.size >= MIN_CANDIDATES;
 }
 
 function resetCoordinationForm() {
@@ -1141,15 +1198,8 @@ async function handleCreateCoordination(event) {
     return;
   }
 
-  const candidates = [...els.coordinationCandidatesList.querySelectorAll('.coordination-candidate-row')].map((row) => ({
-    date: row.querySelector('.coordination-candidate-date').value,
-    time: row.querySelector('.coordination-candidate-time').value || undefined,
-    note: row.querySelector('.coordination-candidate-note').value.trim() || undefined,
-  }));
-
-  // 日付が入っている候補を「日付|時刻」でまとめて数える（補足だけ違う同じ日時は1件。API側と同じ数え方）
-  const uniqueKeys = new Set(candidates.filter((c) => c.date).map((c) => `${c.date}|${c.time || ''}`));
-  if (uniqueKeys.size < MIN_CANDIDATES) {
+  const candidates = readCandidateRows(els.coordinationCandidatesList);
+  if (!hasEnoughCandidates(candidates)) {
     els.coordinationFormError.textContent = MIN_CANDIDATES_MESSAGE;
     return;
   }
@@ -1365,6 +1415,121 @@ async function handleAnswerDialogDelete() {
 function bindDecideDialog() {
   els.decideCancel.addEventListener('click', () => els.decideDialog.close());
   els.decideForm.addEventListener('submit', handleDecideSubmit);
+}
+
+// ===================== 編集ダイアログ =====================
+
+function bindEditDialog() {
+  els.editCancel.addEventListener('click', () => els.editDialog.close());
+  els.editAddCandidateBtn.addEventListener('click', () => {
+    els.editCandidatesList.appendChild(createCandidateRow());
+  });
+  els.editForm.addEventListener('submit', handleEditSubmit);
+}
+
+function openEditDialog(coordination) {
+  editDialogCtx = { coordinationId: coordination.id };
+
+  els.editTitle.value = coordination.title;
+  els.editPlace.value = coordination.place;
+  els.editContent.value = coordination.content;
+  els.editDeadline.value = coordination.reply_deadline || '';
+  els.editCandidatesList.innerHTML = '';
+  for (const candidate of sortedCandidates(coordination)) {
+    els.editCandidatesList.appendChild(createCandidateRow(candidate));
+  }
+  els.editError.textContent = '';
+
+  els.editDialog.showModal();
+}
+
+// 保存したときに消える回答を、最新のデータから数える。
+//   ・送られなかった既存の候補 → 削除（回答が消える）
+//   ・日付か時刻が変わった候補 → 作り直し（回答が消える）。補足だけの変更なら回答は残る
+// 戻り値: 消える回答がある候補ごとの説明文の配列（無ければ空）
+function describeLostAnswers(latest, submitted) {
+  const submittedById = new Map(submitted.filter((c) => c.id).map((c) => [c.id, c]));
+  const lines = [];
+  for (const candidate of sortedCandidates(latest)) {
+    const counts = { yes: 0, maybe: 0, no: 0 };
+    for (const response of latest.coordination_responses || []) {
+      const answer = (response.coordination_answers || []).find((a) => a.candidate_id === candidate.id);
+      if (answer) counts[answer.mark] += 1;
+    }
+    if (counts.yes + counts.maybe + counts.no === 0) continue;
+    const countText = `〇${counts.yes}人・△${counts.maybe}人・✕${counts.no}人`;
+
+    const next = submittedById.get(candidate.id);
+    if (!next) {
+      lines.push(`・${formatCandidateLabel(candidate)}を削除：この候補への回答（${countText}）も消えます`);
+      continue;
+    }
+    const oldTime = candidate.time ? candidate.time.slice(0, 5) : '';
+    const newTime = next.time ? next.time.slice(0, 5) : '';
+    if (candidate.date !== next.date || oldTime !== newTime) {
+      const nextLabel = formatCandidateLabel({ date: next.date, time: next.time || null, note: next.note || null });
+      lines.push(
+        `・${formatCandidateLabel(candidate)} を ${nextLabel} に変更：この候補への回答（${countText}）も消えます`
+      );
+    }
+  }
+  return lines;
+}
+
+async function handleEditSubmit(event) {
+  event.preventDefault();
+  els.editError.textContent = '';
+  if (!editDialogCtx) return;
+
+  const candidates = readCandidateRows(els.editCandidatesList);
+  if (!hasEnoughCandidates(candidates)) {
+    els.editError.textContent = MIN_CANDIDATES_MESSAGE;
+    return;
+  }
+
+  els.editSubmit.disabled = true;
+  try {
+    // 編集画面を開いている間に回答が増えている場合もあるため、確認の前に最新のデータを取り直す
+    const { data: latest, error } = await state.supabase
+      .from('coordinations')
+      .select(COORDINATION_SELECT)
+      .eq('id', editDialogCtx.coordinationId)
+      .maybeSingle();
+    if (error) {
+      els.editError.textContent = '最新の内容を取得できませんでした。時間をおいて再度お試しください';
+      return;
+    }
+    if (!latest) {
+      els.editError.textContent = 'この日程調整は見つかりませんでした（削除された可能性があります）';
+      return;
+    }
+    if (latest.status !== 'open') {
+      els.editError.textContent = '決定済みの日程調整は編集できません';
+      return;
+    }
+
+    const lines = describeLostAnswers(latest, candidates);
+    if (lines.length > 0 && !confirm(`次の候補への回答が消えます。よろしいですか？\n${lines.join('\n')}`)) {
+      return; // キャンセルならダイアログは開いたまま
+    }
+
+    await api.updateCoordination(editDialogCtx.coordinationId, {
+      title: els.editTitle.value.trim(),
+      place: els.editPlace.value.trim(),
+      content: els.editContent.value.trim(),
+      reply_deadline: els.editDeadline.value || undefined,
+      candidates,
+      created_by: state.myName,
+      password: state.password,
+    });
+    state.accordionOpen.add(editDialogCtx.coordinationId);
+    els.editDialog.close();
+    await refreshList();
+  } catch (err) {
+    els.editError.textContent = err.message; // 409（決定済み・ほかの人の編集と衝突）を含め、APIの日本語メッセージをそのまま表示
+  } finally {
+    els.editSubmit.disabled = false;
+  }
 }
 
 function openDecideDialog(coordination, candidate) {

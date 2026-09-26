@@ -92,8 +92,11 @@ module.exports = async (req, res) => {
 
     const normalizedAnswers = [];
     for (const answer of answers) {
+      // 回答画面を開いている間に、日程調整の編集で候補が削除・日時変更された場合もここに来る
       if (!answer || !validCandidateIds.has(answer.candidate_id)) {
-        return sendJson(res, 400, { error: '候補の指定が正しくありません' });
+        return sendJson(res, 409, {
+          error: 'この日程調整の内容が変更されました。画面を読み直してから回答してください。',
+        });
       }
       if (!MARKS.includes(answer.mark)) {
         return sendJson(res, 400, { error: '回答は〇（yes）・△（maybe）・✕（no）のいずれかにしてください' });
