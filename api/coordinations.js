@@ -162,7 +162,9 @@ async function handleCreate(req, res) {
   return sendJson(res, 201, { ...coordination, coordination_candidates: candidateRows });
 }
 
-// DELETE /api/coordinations?id=xxx : 日程調整の削除（作成者本人 or 管理者のみ。決定済みは削除不可）
+// DELETE /api/coordinations?id=xxx : 日程調整の削除（作成者本人 or 管理者のみ）
+//   決定済みも削除できる。eventsはcoordinationsを参照していない（参照の向きは
+//   coordinations.decided_event_id → events.id の一方向）ため、決定で作られた予定と参加者は残る
 async function handleDelete(req, res, id) {
   const { created_by, password } = req.body || {};
   const role = resolveRole(password);
@@ -177,7 +179,7 @@ async function handleDelete(req, res, id) {
 
   const { data: existing, error: fetchError } = await supabase
     .from('coordinations')
-    .select('created_by, status')
+    .select('created_by')
     .eq('id', id)
     .single();
   if (fetchError || !existing) {
@@ -185,11 +187,6 @@ async function handleDelete(req, res, id) {
   }
   if (role !== 'admin' && existing.created_by !== created_by) {
     return sendJson(res, 403, { error: '作成者本人のみ削除できます' });
-  }
-  if (existing.status === 'decided') {
-    return sendJson(res, 400, {
-      error: '決定済みの日程調整は削除できません。先に作成された予定を削除すると調整中に戻ります',
-    });
   }
 
   const { error } = await supabase.from('coordinations').delete().eq('id', id);

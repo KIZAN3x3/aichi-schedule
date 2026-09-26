@@ -534,6 +534,15 @@ function subscribeRealtime() {
         refreshMyEvents();
       }
     })
+    // 日程調整が削除されたら、表示中の予定に残る「元の日程調整を見る」リンクを消すため読み直す。
+    // RealtimeのDELETEは支部で絞り込めないため条件なしで受け取り、表示中の予定のリンク先idと照合する
+    // （payload.oldには既定のreplica identityでも主キーのidが入る）
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'coordinations' }, (payload) => {
+      const coordinationId = payload.old?.id;
+      if (!coordinationId) return;
+      const linked = state.events.some((e) => (e.coordinations || []).some((c) => c.id === coordinationId));
+      if (linked) refreshEvents();
+    })
     .subscribe();
 }
 

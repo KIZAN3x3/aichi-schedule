@@ -643,8 +643,8 @@ function createCoordinationCard(coordination) {
   body.appendChild(createCardActions(coordination));
 
   // 削除は「回答する」から離し、カード右下に小さな文字リンクとして置く
-  // （回答の取消と誤タップしないようにするため）
-  if (canManage(coordination) && coordination.status === 'open') {
+  // （回答の取消と誤タップしないようにするため）。決定済みも削除できる（スケジュールの予定は残る）
+  if (canManage(coordination)) {
     body.appendChild(createDeleteLink(coordination));
   }
 
@@ -1052,10 +1052,12 @@ async function handleCreateCoordination(event) {
 
 async function handleDeleteCoordination(coordination) {
   const responseCount = (coordination.coordination_responses || []).length;
-  const message = `日程調整『${coordination.title}』を削除します。回答${responseCount}人分もすべて消え、元に戻せません。よろしいですか？`;
+  const eventNote = coordination.status === 'decided' ? 'スケジュールの予定は残ります。' : '';
+  const message = `日程調整『${coordination.title}』を削除します。回答${responseCount}人分もすべて消え、元に戻せません。${eventNote}よろしいですか？`;
   if (!confirm(message)) return;
   try {
     await api.deleteCoordination(coordination.id, { created_by: state.myName, password: state.password });
+    state.accordionOpen.delete(coordination.id);
     await refreshList();
   } catch (err) {
     alert(err.message);
