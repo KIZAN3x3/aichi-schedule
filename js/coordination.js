@@ -43,9 +43,11 @@ const api = {
 
 // coordinationsとcoordination_candidatesの間には外部キーが2本ある
 // （coordination_candidates.coordination_id と coordinations.decided_candidate_id）ため、
-// どちらのリレーションを辿るか!<fk名>で明示する（省略するとPGRST201の曖昧エラーになる）
+// どちらのリレーションを辿るか!<fk名>で明示する（省略するとPGRST201の曖昧エラーになる）。
+// decided_event: 決定で作られた予定（decided_event_id経由）。決定情報に予定の時刻を出すために使う（未決定はnull）
 const COORDINATION_SELECT =
-  '*, coordination_candidates!coordination_candidates_coordination_id_fkey(*), coordination_responses(*, coordination_answers(*))';
+  '*, coordination_candidates!coordination_candidates_coordination_id_fkey(*), coordination_responses(*, coordination_answers(*)), ' +
+  'decided_event:events!coordinations_decided_event_id_fkey(date, time, end_time)';
 
 // URLの?id=は起動時に一度だけ読む。ログイン前後でページ遷移しないSPAのため、
 // ログイン後にenterApp()→boot()が呼ばれた時にも同じ値を参照できる
@@ -519,6 +521,16 @@ function subscribeRealtime() {
       if (state.coordinations.some((c) => c.id === id)) refreshList();
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'coordination_answers' }, () => refreshList())
+    // スケジュール画面で予定の時刻などが変わったら、決定情報の表示にすぐ反映する。
+    // 決定で作られた予定（decided_event_id）の変更のときだけ読み直す
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'events', filter: `branch=eq.${state.branch}` },
+      (payload) => {
+        const eventId = payload.new?.id;
+        if (eventId && state.coordinations.some((c) => c.decided_event_id === eventId)) refreshList();
+      }
+    )
     .subscribe();
 }
 
@@ -781,12 +793,25 @@ function createDeleteLink(coordination) {
   return wrap;
 }
 
+// 決定情報の日時。決定ダイアログで入れた時刻（登録された予定の時刻）を表示する。
+// 終了時刻があれば「10:00〜12:00」、なければ開始時刻だけ。
+// 予定が取れない場合は、これまでどおり決定した候補の表示（時刻が空なら「終日」）に戻す
+function decidedLabel(coordination) {
+  const event = coordination.decided_event;
+  if (event && event.date && event.time) {
+    const start = event.time.slice(0, 5);
+    const range = event.end_time ? `${start}〜${event.end_time.slice(0, 5)}` : start;
+    return `${formatDateWithWeekday(event.date)}${range}`;
+  }
+  const candidate = decidedCandidateOf(coordination);
+  return candidate ? formatCandidateLabel(candidate) : '';
+}
+
 function createDecidedInfo(coordination) {
   const box = document.createElement('div');
   box.className = 'coordination-decided-info';
 
-  const candidate = decidedCandidateOf(coordination);
-  const label = candidate ? formatCandidateLabel(candidate) : '';
+  const label = decidedLabel(coordination);
   const text = document.createElement('p');
   text.className = 'coordination-decided-text';
   text.textContent = label ? `${label}に決定` : '決定済み';
