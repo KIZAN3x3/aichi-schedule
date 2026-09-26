@@ -1618,6 +1618,52 @@ body {
   padding: 0 12px 12px;
 }
 
+/* 一覧の一番下の「終わった日程調整（N件）」グループ。標準で閉じ、開くと今と同じカードが並ぶ。
+   調整中・決定済みのカードと区別するため、枠は点線・文字はグレーの落ち着いた見た目にする */
+.coordination-ended-group {
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+}
+
+.coordination-ended-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.coordination-ended-summary::-webkit-details-marker {
+  display: none;
+}
+
+.coordination-ended-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.coordination-ended-chevron {
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.coordination-ended-group[open] .coordination-ended-chevron {
+  transform: rotate(180deg);
+}
+
+/* 中のカードの間隔は、一覧(.coordination-list)と同じ16px */
+.coordination-ended-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 8px 8px;
+}
+
 .coordination-status-open {
   background: var(--orange-light);
   color: #fff;

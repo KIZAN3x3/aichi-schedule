@@ -63,6 +63,7 @@ const state = {
   // 自分の操作（作成・決定）のあと、描画し直した時点でスクロールするカード。
   // requireStatusが指定されていれば、その状態で描画されるまで待つ（古い一覧での空振りを防ぐ）
   pendingScroll: null, // { id, requireStatus }
+  endedGroupOpen: false, // 「終わった日程調整」グループの開閉（Realtimeでの再描画をまたいで保持する）
   pendingNameAction: null, // 表示名未設定で回答ボタンを押した場合の再開用コールバック
 };
 
@@ -191,6 +192,7 @@ function bindStaticEvents() {
     localStorage.setItem('aichi-schedule:branch', state.branch);
     state.accordionOpen.clear();
     state.pendingScroll = null;
+    state.endedGroupOpen = false;
     refreshList();
     subscribeRealtime();
   });
@@ -319,9 +321,10 @@ async function openSharedCoordination(id) {
   state.branch = data.branch;
   els.branchSelect.value = data.branch;
   state.accordionOpen.add(id);
+  // スクロールは描画後に予約で行う（対象が「終わった日程調整」の中なら、renderListがグループを開いてから）
+  state.pendingScroll = { id, requireStatus: null };
 
   await refreshList();
-  scrollToCoordinationCard(id);
 }
 
 function renderNotFoundBox() {
@@ -376,18 +379,111 @@ function renderList() {
     els.coordinationList.appendChild(hintEl('この支部の日程調整はまだありません'));
     return;
   }
-  for (const coordination of sortedCoordinations(state.coordinations)) {
+  const { open, decided, ended } = groupCoordinations(state.coordinations);
+  for (const coordination of [...open, ...decided]) {
     els.coordinationList.appendChild(createCoordinationCard(coordination));
+  }
+  if (ended.length > 0) {
+    // スクロール予約の対象が「終わった日程調整」の中にあれば、閉じたままだと見えないため開いておく
+    if (state.pendingScroll && ended.some((c) => c.id === state.pendingScroll.id)) {
+      state.endedGroupOpen = true;
+    }
+    els.coordinationList.appendChild(createEndedGroup(ended));
   }
   runPendingScroll();
 }
 
-// 調整中(open)を上、決定済み(decided)を下にし、それぞれ作成日時の新しい順に並べる
-function sortedCoordinations(coordinations) {
-  const statusRank = (c) => (c.status === 'open' ? 0 : 1);
-  return [...coordinations].sort(
-    (a, b) => statusRank(a) - statusRank(b) || new Date(b.created_at) - new Date(a.created_at)
+const tokyoDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+// 日本時間の今日を「YYYY-MM-DD」で返す（候補のdateと文字列のまま比較するため）
+function todayInTokyo() {
+  return tokyoDateFormatter.format(new Date());
+}
+
+function decidedCandidateOf(coordination) {
+  if (!coordination.decided_candidate_id) return null;
+  return (coordination.coordination_candidates || []).find((c) => c.id === coordination.decided_candidate_id) || null;
+}
+
+// 決定済みで、決定した候補の日付が今日（日本時間）より前なら「終わった日程調整」。
+// 決定した候補が見つからない場合は念のため終わった扱いにしない（決定済みの並びに残す）
+function isEnded(coordination, today) {
+  if (coordination.status !== 'decided') return false;
+  const candidate = decidedCandidateOf(coordination);
+  return Boolean(candidate) && candidate.date < today;
+}
+
+// 一覧を3つに分けて並べる
+//   open    : 調整中。作成日時の新しい順
+//   decided : 決定済み（決定した日が今日以降）。決定した日の近い順 → 時刻の早い順 → 作成日時の新しい順
+//   ended   : 終わった日程調整。決定した日の新しい順 → 時刻の遅い順 → 作成日時の新しい順
+// 候補の時刻が空（終日）の場合は空文字として比較する（同じ日の中では時刻ありより前に並ぶ）
+function groupCoordinations(coordinations) {
+  const today = todayInTokyo();
+  const byCreatedDesc = (a, b) => new Date(b.created_at) - new Date(a.created_at);
+  const dateKey = (c) => decidedCandidateOf(c)?.date || '';
+  const timeKey = (c) => decidedCandidateOf(c)?.time || '';
+
+  const open = [];
+  const decided = [];
+  const ended = [];
+  for (const c of coordinations) {
+    if (c.status === 'open') open.push(c);
+    else if (isEnded(c, today)) ended.push(c);
+    else decided.push(c);
+  }
+
+  // 決定した候補が見つからない決定済み（通常は起きない）は、決定済みの並びの末尾に回す
+  const missingLast = (a, b) => Number(!decidedCandidateOf(a)) - Number(!decidedCandidateOf(b));
+
+  open.sort(byCreatedDesc);
+  decided.sort(
+    (a, b) =>
+      missingLast(a, b) ||
+      dateKey(a).localeCompare(dateKey(b)) ||
+      timeKey(a).localeCompare(timeKey(b)) ||
+      byCreatedDesc(a, b)
   );
+  ended.sort(
+    (a, b) =>
+      dateKey(b).localeCompare(dateKey(a)) || timeKey(b).localeCompare(timeKey(a)) || byCreatedDesc(a, b)
+  );
+  return { open, decided, ended };
+}
+
+// 「終わった日程調整（N件）」のグループ。標準で閉じ、開くと今と同じカードが並ぶ
+function createEndedGroup(ended) {
+  const details = document.createElement('details');
+  details.className = 'coordination-ended-group';
+  details.open = state.endedGroupOpen;
+  details.addEventListener('toggle', () => {
+    state.endedGroupOpen = details.open;
+  });
+
+  const summary = document.createElement('summary');
+  summary.className = 'coordination-ended-summary';
+  const label = document.createElement('span');
+  label.className = 'coordination-ended-label';
+  label.textContent = `終わった日程調整（${ended.length}件）`;
+  const chevron = document.createElement('span');
+  chevron.className = 'coordination-ended-chevron';
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.textContent = '▼';
+  summary.append(label, chevron);
+  details.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.className = 'coordination-ended-body';
+  for (const coordination of ended) {
+    body.appendChild(createCoordinationCard(coordination));
+  }
+  details.appendChild(body);
+  return details;
 }
 
 function runPendingScroll() {
@@ -689,7 +785,7 @@ function createDecidedInfo(coordination) {
   const box = document.createElement('div');
   box.className = 'coordination-decided-info';
 
-  const candidate = coordination.coordination_candidates.find((c) => c.id === coordination.decided_candidate_id);
+  const candidate = decidedCandidateOf(coordination);
   const label = candidate ? formatCandidateLabel(candidate) : '';
   const text = document.createElement('p');
   text.className = 'coordination-decided-text';
