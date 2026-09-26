@@ -55,7 +55,10 @@ const state = {
   coordinations: [],
   supabase: null,
   realtimeChannel: null,
-  accordionOpen: new Set(), // 開いている調整のid（Realtimeでの再描画をまたいで保持する）
+  accordionOpen: new Set(), // 開いている調整カードのid（Realtimeでの再描画をまたいで保持する）
+  // 自分の操作（作成・決定）のあと、描画し直した時点でスクロールするカード。
+  // requireStatusが指定されていれば、その状態で描画されるまで待つ（古い一覧での空振りを防ぐ）
+  pendingScroll: null, // { id, requireStatus }
   pendingNameAction: null, // 表示名未設定で回答ボタンを押した場合の再開用コールバック
 };
 
@@ -183,6 +186,7 @@ function bindStaticEvents() {
     // （?id=で開いた際の「画面表示だけ」の切り替えとは区別する。詳しくはopenSharedCoordination参照）
     localStorage.setItem('aichi-schedule:branch', state.branch);
     state.accordionOpen.clear();
+    state.pendingScroll = null;
     refreshList();
     subscribeRealtime();
   });
@@ -332,7 +336,7 @@ function scrollToCoordinationCard(id) {
   requestAnimationFrame(() => {
     const cardEl = els.coordinationList.querySelector(`[data-coordination-id="${id}"]`);
     if (!cardEl) return;
-    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 }
 
@@ -368,9 +372,28 @@ function renderList() {
     els.coordinationList.appendChild(hintEl('この支部の日程調整はまだありません'));
     return;
   }
-  for (const coordination of state.coordinations) {
+  for (const coordination of sortedCoordinations(state.coordinations)) {
     els.coordinationList.appendChild(createCoordinationCard(coordination));
   }
+  runPendingScroll();
+}
+
+// 調整中(open)を上、決定済み(decided)を下にし、それぞれ作成日時の新しい順に並べる
+function sortedCoordinations(coordinations) {
+  const statusRank = (c) => (c.status === 'open' ? 0 : 1);
+  return [...coordinations].sort(
+    (a, b) => statusRank(a) - statusRank(b) || new Date(b.created_at) - new Date(a.created_at)
+  );
+}
+
+function runPendingScroll() {
+  const pending = state.pendingScroll;
+  if (!pending) return;
+  const coordination = state.coordinations.find((c) => c.id === pending.id);
+  if (!coordination) return;
+  if (pending.requireStatus && coordination.status !== pending.requireStatus) return;
+  state.pendingScroll = null;
+  scrollToCoordinationCard(pending.id);
 }
 
 function subscribeRealtime() {
@@ -544,57 +567,104 @@ function requireMyName(action) {
   els.nameDisplayBtn.click();
 }
 
+// カード全体を<details>で開閉する。閉じた状態は「題名（M/D作成）＋状態バッジ」の1行だけ
 function createCoordinationCard(coordination) {
   const card = document.createElement('article');
   card.className = 'coordination-card';
   card.dataset.coordinationId = coordination.id;
 
-  const header = document.createElement('div');
-  header.className = 'coordination-card-header';
+  const details = document.createElement('details');
+  details.className = 'coordination-card-details';
+  details.open = state.accordionOpen.has(coordination.id);
+  details.addEventListener('toggle', () => {
+    if (details.open) state.accordionOpen.add(coordination.id);
+    else state.accordionOpen.delete(coordination.id);
+  });
 
+  const summary = document.createElement('summary');
+  summary.className = 'coordination-card-summary';
+
+  // 閉じた状態は2段構成。1段目は題名のみ（全幅）、2段目は左に「M/D作成」、右端にバッジと▼
+  // （スマホ幅で題名が数文字で折り返して窮屈にならないようにするため）
   const title = document.createElement('h3');
   title.className = 'coordination-title';
   title.textContent = coordination.title;
-  header.appendChild(title);
+  summary.appendChild(title);
+
+  // <summary>の中身は記述コンテンツに限られるため、2段目の行はdivではなくspanで作る
+  const metaRow = document.createElement('span');
+  metaRow.className = 'coordination-card-summary-meta';
+
+  const created = document.createElement('span');
+  created.className = 'coordination-created';
+  created.textContent = `${formatCreatedMonthDay(coordination.created_at)}作成`;
+  metaRow.appendChild(created);
 
   const badge = document.createElement('span');
   badge.className = coordination.status === 'decided' ? 'finished-badge' : 'coordination-status-open';
   badge.textContent = coordination.status === 'decided' ? '決定済み' : '調整中';
-  header.appendChild(badge);
-  card.appendChild(header);
+  metaRow.appendChild(badge);
+
+  const chevron = document.createElement('span');
+  chevron.className = 'coordination-card-chevron';
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.textContent = '▼';
+  metaRow.appendChild(chevron);
+
+  summary.appendChild(metaRow);
+  details.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.className = 'coordination-card-body';
 
   const meta = document.createElement('p');
   meta.className = 'coordination-meta';
   meta.textContent = `${coordination.branch} ・ 場所: ${coordination.place}`;
-  card.appendChild(meta);
+  body.appendChild(meta);
 
   const content = document.createElement('p');
   content.className = 'event-content';
   linkifyInto(content, coordination.content);
-  card.appendChild(content);
+  body.appendChild(content);
 
   if (coordination.reply_deadline) {
     const deadline = document.createElement('p');
     deadline.className = 'coordination-deadline';
     deadline.textContent = `回答締切: ${formatDateWithWeekday(coordination.reply_deadline)}`;
-    card.appendChild(deadline);
+    body.appendChild(deadline);
   }
 
   if (coordination.status === 'decided') {
-    card.appendChild(createDecidedInfo(coordination));
+    body.appendChild(createDecidedInfo(coordination));
   }
 
-  card.appendChild(createVoteAccordion(coordination));
-  card.appendChild(createShareActions(coordination));
-  card.appendChild(createCardActions(coordination));
+  body.appendChild(createVoteSection(coordination));
+  body.appendChild(createShareActions(coordination));
+  body.appendChild(createCardActions(coordination));
 
   // 削除は「回答する」から離し、カード右下に小さな文字リンクとして置く
   // （回答の取消と誤タップしないようにするため）
   if (canManage(coordination) && coordination.status === 'open') {
-    card.appendChild(createDeleteLink(coordination));
+    body.appendChild(createDeleteLink(coordination));
   }
 
+  details.appendChild(body);
+  card.appendChild(details);
   return card;
+}
+
+const createdMonthDayFormatter = new Intl.DateTimeFormat('ja-JP', {
+  timeZone: 'Asia/Tokyo',
+  month: 'numeric',
+  day: 'numeric',
+});
+
+// created_at（timestamptz）を日本時間の「M/D」にする
+function formatCreatedMonthDay(createdAt) {
+  const parts = createdMonthDayFormatter.formatToParts(new Date(createdAt));
+  const month = parts.find((p) => p.type === 'month').value;
+  const day = parts.find((p) => p.type === 'day').value;
+  return `${month}/${day}`;
 }
 
 function createDeleteLink(coordination) {
@@ -687,9 +757,10 @@ function createCardActions(coordination) {
   return row;
 }
 
-// ===================== 候補×回答者の表（アコーディオン） =====================
+// ===================== 候補×回答者の表 =====================
 
-function createVoteAccordion(coordination) {
+// カード自体が開閉式のため、表は開閉せずにそのまま表示する（要約1行＋案内文＋表）
+function createVoteSection(coordination) {
   const candidates = sortedCandidates(coordination);
   const responses = coordination.coordination_responses || [];
 
@@ -707,53 +778,35 @@ function createVoteAccordion(coordination) {
     topCount > 0 ? candidates.filter((c) => counts.get(c.id).yes === topCount).map((c) => c.id) : []
   );
 
-  const details = document.createElement('details');
-  details.className = 'coordination-accordion';
-  details.open = state.accordionOpen.has(coordination.id);
-  details.addEventListener('toggle', () => {
-    if (details.open) state.accordionOpen.add(coordination.id);
-    else state.accordionOpen.delete(coordination.id);
-  });
+  const section = document.createElement('div');
+  section.className = 'coordination-vote-section';
 
-  const summary = document.createElement('summary');
-  summary.className = 'coordination-summary';
-
-  const summaryText = document.createElement('span');
-  summaryText.className = 'coordination-summary-text';
+  const summaryText = document.createElement('p');
+  summaryText.className = 'coordination-vote-summary';
   const parts = [`候補${candidates.length}件`, `回答${responses.length}人`];
   if (topCount > 0) {
     const topLabel = candidates.filter((c) => topCandidateIds.has(c.id)).map((c) => formatCandidateLabel(c)).join('・');
     parts.push(`〇最多: ${topLabel}(${topCount}件)`);
   }
   summaryText.textContent = parts.join(' ・ ');
-  summary.appendChild(summaryText);
+  section.appendChild(summaryText);
 
-  const chevron = document.createElement('span');
-  chevron.className = 'coordination-summary-chevron';
-  chevron.setAttribute('aria-hidden', 'true');
-  chevron.textContent = '▼';
-  summary.appendChild(chevron);
-  details.appendChild(summary);
-
-  const body = document.createElement('div');
-  body.className = 'coordination-accordion-body';
   if (candidates.length === 0) {
-    body.appendChild(hintEl('候補がありません'));
+    section.appendChild(hintEl('候補がありません'));
   } else {
     // 回答が0件でも、候補があれば表（と決定行）は表示する。決定は回答が無くても行えるため
-    if (responses.length === 0) body.appendChild(hintEl('まだ回答はありません'));
+    if (responses.length === 0) section.appendChild(hintEl('まだ回答はありません'));
     // 案内文は「回答が1件以上あり、かつ調整中（タップで編集できる状態）」のときだけ出す
     if (responses.length > 0 && coordination.status === 'open') {
       const hint = document.createElement('p');
       hint.className = 'coordination-table-hint';
       hint.textContent = '名前をタップすると回答を編集できます';
-      body.appendChild(hint);
+      section.appendChild(hint);
     }
-    body.appendChild(createVoteTable(coordination, candidates, responses, counts, topCandidateIds));
+    section.appendChild(createVoteTable(coordination, candidates, responses, counts, topCandidateIds));
   }
-  details.appendChild(body);
 
-  return details;
+  return section;
 }
 
 // 行＝候補日、列＝回答者。候補日・〇・△・✕の4列はCSS側でposition:stickyにして固定し、
@@ -858,7 +911,7 @@ function createCandidateRowInTable(coordination, candidate, responses, counts, t
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn btn-outline btn-small';
-    btn.textContent = 'この日に決定';
+    btn.textContent = '決定';
     btn.addEventListener('click', () => openDecideDialog(coordination, candidate));
     td.appendChild(btn);
     tr.appendChild(td);
@@ -972,7 +1025,7 @@ async function handleCreateCoordination(event) {
   const submitBtn = els.coordinationForm.querySelector('button[type="submit"]');
   submitBtn.disabled = true;
   try {
-    await api.createCoordination({
+    const created = await api.createCoordination({
       branch: state.branch,
       title: els.coordinationTitle.value.trim(),
       place: els.coordinationPlace.value.trim(),
@@ -984,6 +1037,11 @@ async function handleCreateCoordination(event) {
     });
     els.coordinationForm.classList.add('hidden');
     els.newCoordinationToggleBtn.textContent = '＋ 日程調整を作成';
+    // 作成した本人の画面だけ、作った調整を開いた状態で表示する
+    if (created && created.id) {
+      state.accordionOpen.add(created.id);
+      state.pendingScroll = { id: created.id, requireStatus: null };
+    }
     await refreshList();
   } catch (err) {
     els.coordinationFormError.textContent = err.message;
@@ -1243,6 +1301,9 @@ async function handleDecideSubmit(event) {
       password: state.password,
     });
     els.decideDialog.close();
+    // 決定済みは一覧の下へ移動するため、決定した本人の画面だけ、そのカードを開いたままスクロールで追いかける
+    state.accordionOpen.add(decideDialogCtx.coordinationId);
+    state.pendingScroll = { id: decideDialogCtx.coordinationId, requireStatus: 'decided' };
     await refreshList();
   } catch (err) {
     els.decideError.textContent = err.message; // 409を含め、APIの日本語メッセージをそのまま表示
