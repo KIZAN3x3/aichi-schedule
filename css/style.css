@@ -1758,6 +1758,13 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* 表の上の「まだ回答はありません」「候補がありません」。共通の.hint-text（padding: 12px 0）と
+   <p>既定の上下marginで要約の行との間が大きく空くため、ここだけ「名前をタップすると…」と同じ余白に詰める */
+.coordination-vote-section > .hint-text {
+  margin: 0 0 6px;
+  padding: 0;
+}
+
 /* 候補×回答者の表。行＝候補日、列＝回答者。
    候補日・〇・△・✕の4列はposition:stickyで固定し、回答者の列だけが横スクロールする。
    外側の角丸の枠はここだけが持つ（.coordination-table自身には外枠を付けない。二重の箱に
@@ -2053,6 +2060,27 @@ thead .coordination-col-count-no {
 .coordination-candidate-row > button {
   justify-self: end;
   align-self: center;
+}
+
+/* 作成フォーム・編集ダイアログの候補日時の見出しと説明（時刻は空欄でもよいこと）。
+   見出しは他の入力欄のラベル（15px・--text-muted）とそろえる */
+.coordination-candidate-help {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.coordination-candidate-heading {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+.coordination-candidate-help-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 /* 編集ダイアログの注意書き（候補の日時変更・削除で回答が消えること） */

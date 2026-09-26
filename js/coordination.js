@@ -1128,7 +1128,10 @@ function createCandidateRow(initial = {}) {
   const timeInput = document.createElement('input');
   timeInput.type = 'time';
   timeInput.className = 'coordination-candidate-time';
-  timeInput.placeholder = '時刻（任意）';
+  // 時刻入力ではplaceholderが表示されないため、長押し・読み上げ用の説明として付ける
+  // （画面上の説明は候補の一覧の上の「時刻は空欄でもOK…」の1行）
+  timeInput.title = '時刻（空欄なら終日）';
+  timeInput.setAttribute('aria-label', '時刻（空欄なら終日）');
   timeInput.value = initial.time ? initial.time.slice(0, 5) : '';
 
   const noteInput = document.createElement('input');
