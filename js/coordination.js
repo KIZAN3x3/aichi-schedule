@@ -9,6 +9,10 @@ const MARK_LABELS = { yes: '〇', maybe: '△', no: '✕' };
 const MARK_ARIA_LABELS = { yes: '参加できる', maybe: '未定', no: '参加できない' };
 const COMMENT_MAX = 200;
 const CANDIDATE_NOTE_MAX = 50;
+// 候補日の最低件数と、その不足時の文言（api/coordinations.js の MIN_CANDIDATES / 文言と完全に一致させること）
+const MIN_CANDIDATES = 2;
+const MIN_CANDIDATES_MESSAGE =
+  '日程調整は候補日を2つ以上入れてください。日にちが決まっている場合は、スケジュール画面から予定として登録してください。';
 
 // api/*.js への薄いラッパー（js/api.jsのrequest()と同じ実装。このページ単体で完結させるため複製している）
 async function request(path, method, body) {
@@ -1021,6 +1025,13 @@ async function handleCreateCoordination(event) {
     time: row.querySelector('.coordination-candidate-time').value || undefined,
     note: row.querySelector('.coordination-candidate-note').value.trim() || undefined,
   }));
+
+  // 日付が入っている候補を「日付|時刻」でまとめて数える（補足だけ違う同じ日時は1件。API側と同じ数え方）
+  const uniqueKeys = new Set(candidates.filter((c) => c.date).map((c) => `${c.date}|${c.time || ''}`));
+  if (uniqueKeys.size < MIN_CANDIDATES) {
+    els.coordinationFormError.textContent = MIN_CANDIDATES_MESSAGE;
+    return;
+  }
 
   const submitBtn = els.coordinationForm.querySelector('button[type="submit"]');
   submitBtn.disabled = true;

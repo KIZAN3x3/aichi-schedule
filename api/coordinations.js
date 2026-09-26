@@ -4,6 +4,10 @@ const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 
 const MAX_CANDIDATES = 30;
+// 候補日の最低件数と、その不足時の文言（js/coordination.js の MIN_CANDIDATES / 文言と完全に一致させること）
+const MIN_CANDIDATES = 2;
+const MIN_CANDIDATES_MESSAGE =
+  '日程調整は候補日を2つ以上入れてください。日にちが決まっている場合は、スケジュール画面から予定として登録してください。';
 const CANDIDATE_NOTE_MAX_LENGTH = 50;
 const CATEGORY_MAX_LENGTH = 50;
 
@@ -87,10 +91,23 @@ async function handleCreate(req, res) {
   const trimmedDeadline = typeof reply_deadline === 'string' ? reply_deadline.trim() : '';
 
   if (!Array.isArray(candidates) || candidates.length === 0) {
-    return sendJson(res, 400, { error: '候補日時を1件以上入力してください' });
+    return sendJson(res, 400, { error: MIN_CANDIDATES_MESSAGE });
   }
   if (candidates.length > MAX_CANDIDATES) {
     return sendJson(res, 400, { error: `候補日時は${MAX_CANDIDATES}件以内にしてください` });
+  }
+
+  // 日付が入っている候補を「日付|時刻」でまとめて数える（補足だけ違う同じ日時は1件）。
+  // 下の1件ずつのチェックより先に行い、同じ候補を2つ入れただけの場合も「2つ以上」の文言を返す
+  const uniqueKeys = new Set();
+  for (const candidate of candidates) {
+    const date = typeof candidate?.date === 'string' ? candidate.date.trim() : '';
+    if (!date) continue;
+    const time = typeof candidate?.time === 'string' ? candidate.time.trim() : '';
+    uniqueKeys.add(`${date}|${time}`);
+  }
+  if (uniqueKeys.size < MIN_CANDIDATES) {
+    return sendJson(res, 400, { error: MIN_CANDIDATES_MESSAGE });
   }
 
   const normalizedCandidates = [];
