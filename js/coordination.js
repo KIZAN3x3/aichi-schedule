@@ -2,7 +2,7 @@ import { BRANCHES } from './branches.js';
 import { getSupabaseClient } from './supabase-client.js';
 import { CATEGORY_OPTIONS, OTHER_CATEGORY } from './categories.js';
 import { formatDateWithWeekday } from './date-utils.js';
-import { chatworkInfo, createShareActions as createCopyButtons } from './share.js';
+import { replaceChatworkBrackets, chatworkInfo, createShareActions as createCopyButtons } from './share.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般', admin: '管理者' };
@@ -53,7 +53,7 @@ const COORDINATION_SELECT =
 
 // URLの?id=は起動時に一度だけ読む。ログイン前後でページ遷移しないSPAのため、
 // ログイン後にenterApp()→boot()が呼ばれた時にも同じ値を参照できる
-const pendingCoordinationId = new URLSearchParams(location.search).get('id');
+let pendingCoordinationId = new URLSearchParams(location.search).get('id');
 
 const state = {
   role: null,
@@ -314,7 +314,9 @@ async function boot() {
   // ログイン前に開いた場合も、restoreSession→enterApp→bootという同じ経路を通るため、
   // ログイン後に自動でここへ戻ってくる（別途のリダイレクト保存は不要）
   if (pendingCoordinationId) {
-    await openSharedCoordination(pendingCoordinationId);
+    const id = pendingCoordinationId;
+    pendingCoordinationId = null; // ログアウト→再ログインでもう一度開かないよう、使うのは1回だけ
+    await openSharedCoordination(id);
   } else {
     await refreshList();
   }
@@ -327,6 +329,7 @@ async function openSharedCoordination(id) {
     .select(COORDINATION_SELECT)
     .eq('id', id)
     .maybeSingle();
+  removeIdParamFromUrl();
 
   if (error || !data) {
     els.coordinationList.innerHTML = '';
@@ -342,6 +345,14 @@ async function openSharedCoordination(id) {
   state.pendingScroll = { id, requireStatus: null };
 
   await refreshList();
+}
+
+// 開いたあとは?id=をURLから消す（再読み込みで何度も同じ調整へ飛ばないように。スケジュール画面の?event=と同じ）
+function removeIdParamFromUrl() {
+  const url = new URL(location.href);
+  if (!url.searchParams.has('id')) return;
+  url.searchParams.delete('id');
+  history.replaceState(history.state, '', url.pathname + url.search + url.hash);
 }
 
 function renderNotFoundBox() {
@@ -558,8 +569,7 @@ function hintEl(text) {
 
 // ===================== 日付・URLのフォーマット =====================
 
-// candidate.note（候補の補足。例：午前／午後／撮影日）は今はDB未対応のため常にundefinedで、
-// 現状の表示は変わらない。DB追加後にそのまま使えるよう、あらかじめ対応させてある。
+// candidate.note（候補の補足。例：午前／午後／撮影日。migration 0016で追加、未入力はnull）の表示:
 //   時刻あり・補足あり: 1段目「10/4（土）」 2段目「10:00 午前」
 //   時刻あり・補足なし: 1段目「10/4（土）」 2段目「10:00」
 //   時刻なし・補足あり: 1段目「9/27（日）」 2段目「午前」（「終日」の代わりに補足を表示）
@@ -586,7 +596,8 @@ function buildCoordinationUrl(coordination) {
 function buildChatworkText(coordination) {
   const url = buildCoordinationUrl(coordination);
   const candidates = sortedCandidates(coordination);
-  const candidateLines = candidates.map((c) => `・${formatCandidateLabel(c)}`);
+  // 候補の補足(note)は自由記述のため、[ ] を全角にする
+  const candidateLines = candidates.map((c) => `・${replaceChatworkBrackets(formatCandidateLabel(c))}`);
   const deadlineLine = coordination.reply_deadline
     ? `回答締切: ${formatDateWithWeekday(coordination.reply_deadline)}`
     : '回答締切: なし';
