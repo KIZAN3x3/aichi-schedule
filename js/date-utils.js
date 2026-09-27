@@ -26,6 +26,13 @@ export function formatDateLabel(dateStr) {
   return `${y}年${m}月${d}日(${WEEKDAY_LABELS[date.getDay()]})`;
 }
 
+// 「10/4（土）」の形（チャットワーク文面・日程調整の候補日表示で使う）
+export function formatDateWithWeekday(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return `${m}/${d}（${WEEKDAY_LABELS[date.getDay()]}）`;
+}
+
 export function formatMonthRange(monthStart) {
   const start = toDateStr(monthStart);
   const end = toDateStr(new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0));

@@ -16,8 +16,10 @@ import {
   formatMonthLabel,
   formatDateLabel,
   formatMonthRange,
+  formatDateWithWeekday,
   WEEKDAY_LABELS,
 } from './date-utils.js';
+import { replaceChatworkBrackets, chatworkInfo, createShareActions } from './share.js';
 import { renderTimeline } from './timeline.js';
 import { loadHolidays, isHoliday } from './holidays.js';
 
@@ -25,6 +27,10 @@ const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般', admin: '管理者' };
 const MY_EVENTS_DISMISSED_KEY = 'aichi-schedule:myEventsDismissed';
 const PARTICIPANT_COMMENT_MAX = 200;
+
+// URLの?event=（共有リンク）は起動時に一度だけ読む（日程調整画面の?id=と同じ考え方）。
+// ログイン前に開いた場合も、restoreSession→enterApp→bootという同じ経路を通るため、ログイン後にここへ戻ってくる
+let pendingEventId = new URLSearchParams(location.search).get('event');
 
 const state = {
   role: null,
@@ -372,12 +378,48 @@ async function boot() {
     return;
   }
   renderCalendar();
+  if (pendingEventId) {
+    const id = pendingEventId;
+    pendingEventId = null; // ログアウト→再ログインでもう一度開かないよう、使うのは1回だけ
+    await openSharedEvent(id);
+    return;
+  }
+  await showSavedBranch();
+}
+
+async function showSavedBranch() {
   if (state.branch) {
     await Promise.all([refreshMonthDates(), refreshEvents(), refreshBranchOptions()]);
     subscribeRealtime();
   } else {
     renderCurrentView();
   }
+}
+
+// 共有リンク(index.html?event=<id>)で開かれた予定の支部・日付に切り替え、一覧表示でその予定までスクロールする。
+// 支部の切り替えは画面表示だけで、保存済みの支部(localStorageのaichi-schedule:branch)は書き換えない
+async function openSharedEvent(id) {
+  const { data, error } = await state.supabase
+    .from('events')
+    .select('id, branch, date')
+    .eq('id', id)
+    .maybeSingle();
+  removeEventParamFromUrl();
+
+  if (error || !data || !BRANCHES.includes(data.branch)) {
+    await showSavedBranch();
+    alert('この予定は見つかりませんでした（削除された可能性があります）');
+    return;
+  }
+  await showEventDay(data, { saveBranch: false });
+}
+
+// 開いたあとは?event=をURLから消す（再読み込みで何度も同じ予定へ飛ばないように）
+function removeEventParamFromUrl() {
+  const url = new URL(location.href);
+  if (!url.searchParams.has('event')) return;
+  url.searchParams.delete('event');
+  history.replaceState(history.state, '', url.pathname + url.search + url.hash);
 }
 
 function changeMonth(diff) {
@@ -762,10 +804,16 @@ function createMyEventRow(event) {
 }
 
 async function navigateToMyEvent(event) {
+  await showEventDay(event, { saveBranch: true });
+}
+
+// 予定の支部・日付へ切り替えて一覧表示にし、その予定のカードまでスクロールする。
+// saveBranch: 切り替えた支部を保存済みの支部にもするか（共有リンクで開いた場合は保存しない）
+async function showEventDay(event, { saveBranch }) {
   if (state.branch !== event.branch) {
     state.branch = event.branch;
     els.branchSelect.value = event.branch;
-    localStorage.setItem('aichi-schedule:branch', state.branch);
+    if (saveBranch) localStorage.setItem('aichi-schedule:branch', state.branch);
   }
   state.selectedDate = event.date;
   state.viewMode = 'list';
@@ -775,10 +823,13 @@ async function navigateToMyEvent(event) {
   state.calendarMonth = startOfMonth(new Date(y, m - 1, d));
   renderCalendar();
 
-  await Promise.all([refreshMonthDates(), refreshEvents(), refreshBranchOptions()]);
+  // スクロールは予定一覧が描画されたらすぐ行う（入力候補の取得等、ほかの読み込みの完了は待たない）
+  await Promise.all([
+    refreshEvents().then(() => scrollToEventCard(event.id)),
+    refreshMonthDates(),
+    refreshBranchOptions(),
+  ]);
   subscribeRealtime();
-
-  scrollToEventCard(event.id);
 }
 
 function scrollToEventCard(eventId) {
@@ -935,9 +986,7 @@ function createEventCard(event) {
   }
   const time = document.createElement('span');
   time.className = 'event-time';
-  time.textContent = event.end_time
-    ? `${event.time.slice(0, 5)}〜${event.end_time.slice(0, 5)}`
-    : event.time.slice(0, 5);
+  time.textContent = formatEventTimeRange(event);
   const place = createPlaceElement(event.place);
   header.appendChild(time);
   header.appendChild(place);
@@ -969,9 +1018,42 @@ function createEventCard(event) {
   }
 
   card.appendChild(createParticipantsSection(event));
+  // 共有用のコピーボタンは全員に出す（コピーするだけなので権限は不要）。終了済みの予定には出さない
+  if (!event.finished_at) {
+    card.appendChild(
+      createShareActions({
+        getChatworkText: () => buildEventChatworkText(event),
+        getUrl: () => buildEventUrl(event),
+        className: 'event-share-actions',
+      })
+    );
+  }
   card.appendChild(createActionsRow(event, card));
 
   return card;
+}
+
+// 終了時刻があれば「10:00〜12:00」、なければ「10:00」
+function formatEventTimeRange(event) {
+  const start = event.time.slice(0, 5);
+  return event.end_time ? `${start}〜${event.end_time.slice(0, 5)}` : start;
+}
+
+function buildEventUrl(event) {
+  return new URL(`index.html?event=${event.id}`, location.href).href;
+}
+
+// 場所・内容・カテゴリは自由記述のため、[ ] を全角にしてチャットワークの記法が崩れないようにする
+function buildEventChatworkText(event) {
+  const lines = [];
+  if (event.category) lines.push(`カテゴリ: ${replaceChatworkBrackets(event.category)}`);
+  lines.push(`場所: ${replaceChatworkBrackets(event.place)}`);
+  lines.push(`内容: ${replaceChatworkBrackets(event.content)}`);
+  const goingCount = event.participants.filter((p) => p.status === 'going').length;
+  lines.push(goingCount > 0 ? `参加: ${goingCount}名` : '参加: まだいません');
+  lines.push(`詳細・参加の登録はこちら → ${buildEventUrl(event)}`);
+  const title = `${event.branch}の予定：${formatDateWithWeekday(event.date)}${formatEventTimeRange(event)}`;
+  return chatworkInfo(title, lines);
 }
 
 function createCategoryBadge(category) {

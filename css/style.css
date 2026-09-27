@@ -892,6 +892,17 @@ body {
   margin-top: 6px;
 }
 
+/* 予定カードのコピーボタン（.share-actionsは日程調整と共通）。参加ボタンとの押し間違いを防ぐため上を少し空ける。
+   2つが1段に収まらない幅では折り返し、各ボタンを行いっぱいに広げる */
+.event-share-actions {
+  margin-top: 4px;
+}
+
+.event-share-actions .btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* タイムライン表示 */
 .timeline-scroll {
   max-height: 480px;
@@ -1702,13 +1713,13 @@ body {
   color: var(--orange-dark);
 }
 
-.coordination-share-actions {
+.share-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.coordination-copy-fallback {
+.copy-fallback {
   width: 100%;
   min-height: 90px;
   padding: 8px;

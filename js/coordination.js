@@ -1,7 +1,8 @@
 import { BRANCHES } from './branches.js';
 import { getSupabaseClient } from './supabase-client.js';
 import { CATEGORY_OPTIONS, OTHER_CATEGORY } from './categories.js';
-import { WEEKDAY_LABELS } from './date-utils.js';
+import { formatDateWithWeekday } from './date-utils.js';
+import { chatworkInfo, createShareActions as createCopyButtons } from './share.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般', admin: '管理者' };
@@ -557,12 +558,6 @@ function hintEl(text) {
 
 // ===================== 日付・URLのフォーマット =====================
 
-function formatDateWithWeekday(dateStr) {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
-  return `${m}/${d}（${WEEKDAY_LABELS[date.getDay()]}）`;
-}
-
 // candidate.note（候補の補足。例：午前／午後／撮影日）は今はDB未対応のため常にundefinedで、
 // 現状の表示は変わらない。DB追加後にそのまま使えるよう、あらかじめ対応させてある。
 //   時刻あり・補足あり: 1段目「10/4（土）」 2段目「10:00 午前」
@@ -588,40 +583,19 @@ function buildCoordinationUrl(coordination) {
   return new URL(`coordination.html?id=${coordination.id}`, location.href).href;
 }
 
-function replaceChatworkBrackets(text) {
-  return text.replace(/\[/g, '［').replace(/\]/g, '］');
-}
-
 function buildChatworkText(coordination) {
   const url = buildCoordinationUrl(coordination);
   const candidates = sortedCandidates(coordination);
-  const candidateLines = candidates.map((c) => `・${formatCandidateLabel(c)}`).join('\n');
+  const candidateLines = candidates.map((c) => `・${formatCandidateLabel(c)}`);
   const deadlineLine = coordination.reply_deadline
     ? `回答締切: ${formatDateWithWeekday(coordination.reply_deadline)}`
     : '回答締切: なし';
-  const safeTitle = replaceChatworkBrackets(coordination.title);
-  return `[info][title]${safeTitle}（日程調整）[/title]\n候補日:\n${candidateLines}\n${deadlineLine}\n回答はこちら → ${url}\n[/info]`;
-}
-
-async function copyToClipboard(text, fallbackTextareaEl) {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (err) {
-    // 権限拒否・非対応ブラウザ等はフォールバックへ
-  }
-  // フォールバック: 選択済みのtextareaを表示し、手動コピー(Ctrl+C・長押し)を促す
-  fallbackTextareaEl.value = text;
-  fallbackTextareaEl.classList.remove('hidden');
-  fallbackTextareaEl.focus();
-  fallbackTextareaEl.select();
-  try {
-    return document.execCommand('copy'); // 古い環境向けの最終手段。失敗しても選択状態は残る
-  } catch (err) {
-    return false;
-  }
+  return chatworkInfo(`${coordination.title}（日程調整）`, [
+    '候補日:',
+    ...candidateLines,
+    deadlineLine,
+    `回答はこちら → ${url}`,
+  ]);
 }
 
 // ===================== URLのリンク化（スケジュール画面と同じ方式） =====================
@@ -831,10 +805,12 @@ function createDecidedInfo(coordination) {
   text.textContent = label ? `${label}に決定` : '決定済み';
   box.appendChild(text);
 
-  // 該当予定への直接リンクは、スケジュール画面(index.html)側にID指定で開く導線がまだ無いため、
-  // 現状はスケジュール画面への案内にとどめている（将来js/app.js側に対応を追加する余地あり）
+  // 決定で作られた予定を、スケジュール画面で直接開く（index.html?event=<id>）。
+  // 予定が削除された場合はDBトリガーで調整中に戻るため、決定済みならdecided_event_idは入っている
   const link = document.createElement('a');
-  link.href = 'index.html';
+  link.href = coordination.decided_event_id
+    ? `index.html?event=${encodeURIComponent(coordination.decided_event_id)}`
+    : 'index.html';
   link.className = 'btn btn-outline btn-small';
   link.textContent = 'スケジュール画面で見る';
   box.appendChild(link);
@@ -843,41 +819,10 @@ function createDecidedInfo(coordination) {
 }
 
 function createShareActions(coordination) {
-  const wrap = document.createElement('div');
-  wrap.className = 'coordination-share-actions';
-
-  const fallback = document.createElement('textarea');
-  fallback.className = 'coordination-copy-fallback hidden';
-  fallback.readOnly = true;
-
-  const chatworkBtn = document.createElement('button');
-  chatworkBtn.type = 'button';
-  chatworkBtn.className = 'btn btn-outline btn-small';
-  chatworkBtn.textContent = '💬 チャットワーク用にコピー';
-  chatworkBtn.addEventListener('click', async () => {
-    const ok = await copyToClipboard(buildChatworkText(coordination), fallback);
-    flashCopyResult(chatworkBtn, ok);
+  return createCopyButtons({
+    getChatworkText: () => buildChatworkText(coordination),
+    getUrl: () => buildCoordinationUrl(coordination),
   });
-
-  const linkBtn = document.createElement('button');
-  linkBtn.type = 'button';
-  linkBtn.className = 'btn btn-outline btn-small';
-  linkBtn.textContent = '🔗 リンクだけコピー';
-  linkBtn.addEventListener('click', async () => {
-    const ok = await copyToClipboard(buildCoordinationUrl(coordination), fallback);
-    flashCopyResult(linkBtn, ok);
-  });
-
-  wrap.append(chatworkBtn, linkBtn, fallback);
-  return wrap;
-}
-
-function flashCopyResult(btn, ok) {
-  const original = btn.textContent;
-  btn.textContent = ok ? 'コピーしました' : '選択済みです。コピーしてください';
-  setTimeout(() => {
-    btn.textContent = original;
-  }, 2000);
 }
 
 function createCardActions(coordination) {
