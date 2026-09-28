@@ -177,6 +177,29 @@
 
 ---
 
+## Googleログイン＋RLS への移行（段階的に実施中）
+
+現在のアプリはまだ共通パスワード（一般用・管理者用）で動いている。以下は移行後の方針。
+
+### 段階2（migration 0018）で追加したもの
+- **`app_users`**（利用者。auth.usersと1対1）：表示名（一意にしない。別支部の同名の人がいるため）／支部（登録時に本人が入力、必須）／状態（pending=承認待ち・active=有効・disabled=無効）／`is_admin`／`admin_scope`／登録日時／承認日時／承認した人（`approved_by`）／最終ログイン日時（ログイン時のみ更新）
+- **`branch_regions`**（支部と県連の対応表、18行）：西＝西県連・1〜10支部・16支部、東＝東県連・11〜15支部
+- 既存テーブルのnull可のユーザーID列（`app_users.id`を参照）：`events.poster_user_id`／`participants.participant_user_id`・`registered_by_user_id`／`coordinations.created_by_user_id`／`coordination_responses.participant_user_id`・`registered_by_user_id`／`equipment.updated_by_user_id`／`equipment_history.moved_by_user_id`。移行前の行はnullのまま
+- `app_users`・`branch_regions`はRLS有効・ポリシーなし（service_roleからのみアクセス）。既存テーブルのRLSポリシーは変えていない
+- 退会者は削除せず`status`をdisabledにする（外部キーはno actionのため、参照されているユーザーは削除できない）
+
+### 権限の方針（段階3のAPIで実装する。0018では変更なし）
+- **管理者の種類**
+  - グランドマスター（`is_admin = true`）：全支部で全権限。何かあったときの最終対応役
+  - 県連管理者（`admin_scope = 'region'`）：自分の県連内の支部について、グランドマスターと同じ全権限（承認・無効化、県連管理者・支部管理者の指定と解除、過去データの編集・削除、CSV出力（県連内のみ）、入力候補の管理、備品の登録・削除）
+    - できないこと：もう一方の県連のデータ・ユーザーの操作、グランドマスターの無効化・変更、`is_admin`の付与
+  - 支部管理者（`admin_scope = 'branch'`）：自分の支部のユーザーの承認・無効化のみ
+  - 一般（`is_admin = false`かつ`admin_scope`がnull）：本人のデータのみ編集可。ユーザーIDが空欄の行（移行前の過去分）は管理者のみ編集・削除可
+- **参加登録・回答の取消**：登録した人、本人登録なら本人、管理者
+- **データがどの支部のものか**：予定・日程調整は`branch`、参加・回答は親の予定・日程調整の`branch`、備品は所有支部（`owner_branch`）。県連は`branch_regions`で判定する
+
+---
+
 ## デザイン
 - イメージカラーは既存アプリ（banner-maker-v2等）と合わせ、橙色グラデーション系を基本とする
   - 参考：`#f5871f` → `#f06e15` → `#e0590a`
