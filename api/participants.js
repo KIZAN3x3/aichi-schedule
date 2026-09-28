@@ -1,5 +1,5 @@
 const { getSupabaseClient } = require('./_lib/supabase');
-const { resolveRole } = require('./_lib/auth');
+const { resolveRequestRole } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 
 const STATUSES = ['going', 'not_going'];
@@ -29,7 +29,7 @@ function joinErrorResponse(error) {
 // DELETE /api/participants : 予定への参加取り消し（自分の表示名の参加のみ）
 module.exports = async (req, res) => {
   const { event_id, participant_name, password } = req.body || {};
-  const role = resolveRole(password);
+  const role = await resolveRequestRole(req, password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
   }

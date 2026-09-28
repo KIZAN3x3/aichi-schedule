@@ -1,5 +1,5 @@
 const { getSupabaseClient } = require('./_lib/supabase');
-const { resolveRole } = require('./_lib/auth');
+const { resolveRequestRole } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 const { FIXED_CATEGORIES } = require('./_lib/categories');
@@ -12,7 +12,7 @@ module.exports = async (req, res) => {
   }
 
   const { branch, date, time, end_time, place, content, poster_name, category, password } = req.body || {};
-  const role = resolveRole(password);
+  const role = await resolveRequestRole(req, password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
   }

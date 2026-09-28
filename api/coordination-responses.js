@@ -1,5 +1,5 @@
 const { getSupabaseClient } = require('./_lib/supabase');
-const { resolveRole } = require('./_lib/auth');
+const { resolveRequestRole } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 
 const MARKS = ['yes', 'maybe', 'no'];
@@ -33,7 +33,7 @@ function responseErrorResponse(error) {
 //   （数十〜数百ミリ秒の間だけ。データは壊れない。DBトリガーでの厳密な防止は入れていない）
 module.exports = async (req, res) => {
   const { coordination_id, participant_name, password } = req.body || {};
-  const role = resolveRole(password);
+  const role = await resolveRequestRole(req, password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
   }

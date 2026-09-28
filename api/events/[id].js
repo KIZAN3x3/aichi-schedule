@@ -1,5 +1,5 @@
 const { getSupabaseClient } = require('../_lib/supabase');
-const { resolveRole } = require('../_lib/auth');
+const { resolveRequestRole } = require('../_lib/auth');
 const { sendJson, methodNotAllowed } = require('../_lib/http');
 
 // PUT /api/events/:id    予定編集（本人 or 管理者のみ）
@@ -10,7 +10,7 @@ module.exports = async (req, res) => {
 
   if (req.method === 'PUT') {
     const { date, time, end_time, finished, place, content, poster_name, category, password } = req.body || {};
-    const role = resolveRole(password);
+    const role = await resolveRequestRole(req, password);
     if (!role) {
       return sendJson(res, 401, { error: 'パスワードが違います' });
     }
@@ -63,7 +63,7 @@ module.exports = async (req, res) => {
 
   if (req.method === 'DELETE') {
     const { poster_name, password } = req.body || {};
-    const role = resolveRole(password);
+    const role = await resolveRequestRole(req, password);
     if (!role) {
       return sendJson(res, 401, { error: 'パスワードが違います' });
     }

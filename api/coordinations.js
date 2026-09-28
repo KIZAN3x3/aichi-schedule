@@ -1,5 +1,5 @@
 const { getSupabaseClient } = require('./_lib/supabase');
-const { resolveRole } = require('./_lib/auth');
+const { resolveRequestRole } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 
@@ -165,7 +165,7 @@ function validateCandidates(candidates, { allowId }) {
 //   コンペンセーティングアクション＝失敗時の後始末で対応している）
 async function handleCreate(req, res) {
   const { branch, title, place, content, created_by, reply_deadline, candidates, password } = req.body || {};
-  const role = resolveRole(password);
+  const role = await resolveRequestRole(req, password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
   }
@@ -241,7 +241,7 @@ async function handleCreate(req, res) {
 //   （行ロックにより決定処理と同時には走らない。決定済みならP0001で止まる）
 async function handleUpdate(req, res, id) {
   const { title, place, content, reply_deadline, candidates, created_by, password } = req.body || {};
-  const role = resolveRole(password);
+  const role = await resolveRequestRole(req, password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
   }
@@ -301,7 +301,7 @@ async function handleUpdate(req, res, id) {
 //   coordinations.decided_event_id → events.id の一方向）ため、決定で作られた予定と参加者は残る
 async function handleDelete(req, res, id) {
   const { created_by, password } = req.body || {};
-  const role = resolveRole(password);
+  const role = await resolveRequestRole(req, password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
   }
@@ -350,7 +350,7 @@ async function handleDecide(req, res, id) {
     password,
   } = req.body || {};
 
-  const role = resolveRole(password);
+  const role = await resolveRequestRole(req, password);
   if (!role) {
     return sendJson(res, 401, { error: 'パスワードが違います' });
   }
