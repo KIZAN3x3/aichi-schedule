@@ -22,6 +22,17 @@ import {
 import { replaceChatworkBrackets, chatworkInfo, createShareActions } from './share.js';
 import { renderTimeline } from './timeline.js';
 import { loadHolidays, isHoliday } from './holidays.js';
+import {
+  setupGoogleLogin,
+  loadGoogleAccount,
+  showAccountGate,
+  signOutLocal,
+  googleLogout,
+  lockHeaderName,
+  roleLabelOf,
+  legacyRoleOf,
+  adminKindOf,
+} from './auth.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般', admin: '管理者' };
@@ -52,6 +63,7 @@ const state = {
   participantDialog: null, // { eventId, status, editing }
   pendingParticipantOpen: null, // 名前未設定で大ボタンを押した場合の再開用 { eventId, status }
   participantsOpen: new Set(), // 開いている予定カードのevent_id（再描画をまたいで開閉状態を保持）
+  googleUser: null, // Googleでログイン中の利用者（app_usersの行）。共通パスワードのときはnull
 };
 
 const els = {
@@ -71,6 +83,7 @@ const els = {
   branchSelect: document.getElementById('branch-select'),
   branchOptionsBtn: document.getElementById('branch-options-btn'),
   csvExportBtn: document.getElementById('csv-export-btn'),
+  userAdminBtn: document.getElementById('user-admin-btn'),
   csvExportDialog: document.getElementById('csv-export-dialog'),
   csvExportForm: document.getElementById('csv-export-form'),
   csvExportFrom: document.getElementById('csv-export-from'),
@@ -128,6 +141,7 @@ async function init() {
   renderWeekdayHeader();
   await loadHolidays();
   bindStaticEvents();
+  setupGoogleLogin();
   bindCsvExportEvents();
   bindParticipantDialogEvents();
   restoreSession();
@@ -304,7 +318,7 @@ function updateViewToggleUI() {
   els.viewMineBtn.setAttribute('aria-selected', String(state.viewMode === 'mine'));
 }
 
-function restoreSession() {
+async function restoreSession() {
   const savedName = localStorage.getItem('aichi-schedule:name') || '';
   state.myName = savedName;
   updateNameDisplay();
@@ -319,17 +333,40 @@ function restoreSession() {
 
   const savedPassword = localStorage.getItem('aichi-schedule:password');
   const savedRole = localStorage.getItem('aichi-schedule:role');
-  els.bootLoading.classList.add('hidden');
   if (savedPassword && savedRole) {
+    els.bootLoading.classList.add('hidden');
     state.password = savedPassword;
     state.role = savedRole;
     enterApp();
-  } else {
-    els.loginScreen.classList.remove('hidden');
+    return;
   }
+
+  // 共通パスワードが無ければ、Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
+  let account = null;
+  try {
+    account = await loadGoogleAccount();
+  } catch (err) {
+    console.error(err);
+    els.loginError.textContent = 'ログイン状態を確認できませんでした。時間をおいて再度お試しください';
+  }
+  els.bootLoading.classList.add('hidden');
+  if (!account) {
+    els.loginScreen.classList.remove('hidden');
+    return;
+  }
+  if (account.status !== 'active') {
+    showAccountGate(account);
+    return;
+  }
+  state.googleUser = account.user;
+  state.password = null;
+  state.role = legacyRoleOf(account.user);
+  state.myName = account.user.display_name; // 保存済みの名前(localStorage)は書き換えない
+  lockHeaderName(els, account.user);
+  enterApp();
 }
 
-function handleLoginSubmit(event) {
+async function handleLoginSubmit(event) {
   event.preventDefault();
   const password = els.passwordInput.value.trim();
   const role = PASSWORD_ROLES[password];
@@ -337,6 +374,8 @@ function handleLoginSubmit(event) {
     els.loginError.textContent = 'パスワードが違います';
     return;
   }
+  // 共通パスワードでログインするときは、Googleのセッションが残っていれば消す（どちらか一方だけにする）
+  await signOutLocal().catch((err) => console.error(err));
   state.password = password;
   state.role = role;
   localStorage.setItem('aichi-schedule:password', password);
@@ -345,6 +384,10 @@ function handleLoginSubmit(event) {
 }
 
 function handleLogout() {
+  if (state.googleUser) {
+    googleLogout(); // Googleのセッションを消してページを読み直す
+    return;
+  }
   if (state.realtimeChannel && state.supabase) {
     state.supabase.removeChannel(state.realtimeChannel);
     state.realtimeChannel = null;
@@ -363,10 +406,12 @@ function handleLogout() {
 function enterApp() {
   els.loginScreen.classList.add('hidden');
   els.app.classList.remove('hidden');
-  els.roleText.textContent = ROLE_LABELS[state.role];
+  els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
   els.branchOptionsBtn.classList.toggle('hidden', state.role !== 'admin');
   els.csvExportBtn.classList.toggle('hidden', state.role !== 'admin');
+  // ユーザー管理は、Googleでログインした管理者（グランドマスター・県連管理者・支部管理者）だけ
+  els.userAdminBtn.classList.toggle('hidden', !adminKindOf(state.googleUser));
   boot();
 }
 
@@ -465,6 +510,8 @@ async function refreshEvents() {
     renderCurrentView();
     return;
   }
+  // Supabaseの準備前（ログイン直後に日付を押した等）は何もしない。準備ができたらboot()で読み込む
+  if (!state.supabase) return;
   renderLoadingState();
 
   // coordinations!coordinations_decided_event_id_fkey(id): この予定が日程調整の決定で

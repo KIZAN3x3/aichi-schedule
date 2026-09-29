@@ -1,5 +1,15 @@
 import { BRANCHES } from './branches.js';
 import { api } from './api.js';
+import {
+  setupGoogleLogin,
+  loadGoogleAccount,
+  showAccountGate,
+  signOutLocal,
+  googleLogout,
+  lockHeaderName,
+  roleLabelOf,
+  legacyRoleOf,
+} from './auth.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
@@ -10,6 +20,7 @@ const state = {
   password: null,
   myName: '',
   branch: '',
+  googleUser: null, // Googleでログイン中の利用者（app_usersの行）。共通パスワードのときはnull
 };
 
 const els = {
@@ -38,6 +49,7 @@ init();
 
 function init() {
   bindStaticEvents();
+  setupGoogleLogin();
   restoreSession();
 }
 
@@ -87,24 +99,47 @@ function updateNameDisplay() {
   els.nameDisplayValue.textContent = state.myName || 'お名前未設定';
 }
 
-function restoreSession() {
+async function restoreSession() {
   const savedName = localStorage.getItem('aichi-schedule:name') || '';
   state.myName = savedName;
   updateNameDisplay();
 
   const savedPassword = localStorage.getItem('aichi-schedule:password');
   const savedRole = localStorage.getItem('aichi-schedule:role');
-  els.bootLoading.classList.add('hidden');
   if (savedPassword && savedRole) {
+    els.bootLoading.classList.add('hidden');
     state.password = savedPassword;
     state.role = savedRole;
     enterApp();
-  } else {
-    els.loginScreen.classList.remove('hidden');
+    return;
   }
+
+  // 共通パスワードが無ければ、Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
+  let account = null;
+  try {
+    account = await loadGoogleAccount();
+  } catch (err) {
+    console.error(err);
+    els.loginError.textContent = 'ログイン状態を確認できませんでした。時間をおいて再度お試しください';
+  }
+  els.bootLoading.classList.add('hidden');
+  if (!account) {
+    els.loginScreen.classList.remove('hidden');
+    return;
+  }
+  if (account.status !== 'active') {
+    showAccountGate(account);
+    return;
+  }
+  state.googleUser = account.user;
+  state.password = null;
+  state.role = legacyRoleOf(account.user);
+  state.myName = account.user.display_name; // 保存済みの名前(localStorage)は書き換えない
+  lockHeaderName(els, account.user);
+  enterApp();
 }
 
-function handleLoginSubmit(event) {
+async function handleLoginSubmit(event) {
   event.preventDefault();
   const password = els.passwordInput.value.trim();
   const role = PASSWORD_ROLES[password];
@@ -112,6 +147,8 @@ function handleLoginSubmit(event) {
     els.loginError.textContent = 'パスワードが違います';
     return;
   }
+  // 共通パスワードでログインするときは、Googleのセッションが残っていれば消す（どちらか一方だけにする）
+  await signOutLocal().catch((err) => console.error(err));
   state.password = password;
   state.role = role;
   localStorage.setItem('aichi-schedule:password', password);
@@ -120,6 +157,10 @@ function handleLoginSubmit(event) {
 }
 
 function handleLogout() {
+  if (state.googleUser) {
+    googleLogout(); // Googleのセッションを消してページを読み直す
+    return;
+  }
   localStorage.removeItem('aichi-schedule:password');
   localStorage.removeItem('aichi-schedule:role');
   state.password = null;
@@ -134,7 +175,7 @@ function handleLogout() {
 function enterApp() {
   els.loginScreen.classList.add('hidden');
   els.app.classList.remove('hidden');
-  els.roleText.textContent = ROLE_LABELS[state.role];
+  els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
 
   if (state.role !== 'admin') {

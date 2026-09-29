@@ -1,8 +1,11 @@
+import { getAuthHeaders } from './auth.js';
+
 // api/*.js への薄いラッパー。bodyを渡さなければGETとして送る。
+// Googleでログイン中なら、呼ぶたびに最新のアクセストークンを Authorization: Bearer で付ける
 async function request(path, method, body) {
-  const options = { method };
+  const options = { method, headers: await getAuthHeaders() };
   if (body !== undefined) {
-    options.headers = { 'Content-Type': 'application/json' };
+    options.headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   }
   const res = await fetch(path, options);
@@ -36,7 +39,7 @@ export const api = {
 export async function downloadCsv(params) {
   const res = await fetch('/api/export-csv', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...(await getAuthHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
 

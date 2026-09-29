@@ -3,6 +3,17 @@ import { getSupabaseClient } from './supabase-client.js';
 import { CATEGORY_OPTIONS, OTHER_CATEGORY } from './categories.js';
 import { formatDateWithWeekday } from './date-utils.js';
 import { replaceChatworkBrackets, chatworkInfo, createShareActions as createCopyButtons } from './share.js';
+import {
+  getAuthHeaders,
+  setupGoogleLogin,
+  loadGoogleAccount,
+  showAccountGate,
+  signOutLocal,
+  googleLogout,
+  lockHeaderName,
+  roleLabelOf,
+  legacyRoleOf,
+} from './auth.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般', admin: '管理者' };
@@ -16,10 +27,11 @@ const MIN_CANDIDATES_MESSAGE =
   '日程調整は候補日を2つ以上入れてください。日にちが決まっている場合は、スケジュール画面から予定として登録してください。';
 
 // api/*.js への薄いラッパー（js/api.jsのrequest()と同じ実装。このページ単体で完結させるため複製している）
+// Googleでログイン中なら、呼ぶたびに最新のアクセストークンを Authorization: Bearer で付ける
 async function request(path, method, body) {
-  const options = { method };
+  const options = { method, headers: await getAuthHeaders() };
   if (body !== undefined) {
-    options.headers = { 'Content-Type': 'application/json' };
+    options.headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   }
   const res = await fetch(path, options);
@@ -69,6 +81,7 @@ const state = {
   pendingScroll: null, // { id, requireStatus }
   endedGroupOpen: false, // 「終わった日程調整」グループの開閉（Realtimeでの再描画をまたいで保持する）
   pendingNameAction: null, // 表示名未設定で回答ボタンを押した場合の再開用コールバック
+  googleUser: null, // Googleでログイン中の利用者（app_usersの行）。共通パスワードのときはnull
 };
 
 const els = {
@@ -149,6 +162,7 @@ async function init() {
   populateCategorySelect();
   bindCategoryToggle();
   bindStaticEvents();
+  setupGoogleLogin();
   bindCoordinationForm();
   bindAnswerDialog();
   bindDecideDialog();
@@ -240,7 +254,7 @@ function updateNameDisplay() {
   els.nameDisplayValue.textContent = state.myName || 'お名前未設定';
 }
 
-function restoreSession() {
+async function restoreSession() {
   const savedName = localStorage.getItem('aichi-schedule:name') || '';
   state.myName = savedName;
   updateNameDisplay();
@@ -253,17 +267,40 @@ function restoreSession() {
 
   const savedPassword = localStorage.getItem('aichi-schedule:password');
   const savedRole = localStorage.getItem('aichi-schedule:role');
-  els.bootLoading.classList.add('hidden');
   if (savedPassword && savedRole) {
+    els.bootLoading.classList.add('hidden');
     state.password = savedPassword;
     state.role = savedRole;
     enterApp();
-  } else {
-    els.loginScreen.classList.remove('hidden');
+    return;
   }
+
+  // 共通パスワードが無ければ、Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
+  let account = null;
+  try {
+    account = await loadGoogleAccount();
+  } catch (err) {
+    console.error(err);
+    els.loginError.textContent = 'ログイン状態を確認できませんでした。時間をおいて再度お試しください';
+  }
+  els.bootLoading.classList.add('hidden');
+  if (!account) {
+    els.loginScreen.classList.remove('hidden');
+    return;
+  }
+  if (account.status !== 'active') {
+    showAccountGate(account);
+    return;
+  }
+  state.googleUser = account.user;
+  state.password = null;
+  state.role = legacyRoleOf(account.user);
+  state.myName = account.user.display_name; // 保存済みの名前(localStorage)は書き換えない
+  lockHeaderName(els, account.user);
+  enterApp();
 }
 
-function handleLoginSubmit(event) {
+async function handleLoginSubmit(event) {
   event.preventDefault();
   const password = els.passwordInput.value.trim();
   const role = PASSWORD_ROLES[password];
@@ -271,6 +308,8 @@ function handleLoginSubmit(event) {
     els.loginError.textContent = 'パスワードが違います';
     return;
   }
+  // 共通パスワードでログインするときは、Googleのセッションが残っていれば消す（どちらか一方だけにする）
+  await signOutLocal().catch((err) => console.error(err));
   state.password = password;
   state.role = role;
   localStorage.setItem('aichi-schedule:password', password);
@@ -279,6 +318,10 @@ function handleLoginSubmit(event) {
 }
 
 function handleLogout() {
+  if (state.googleUser) {
+    googleLogout(); // Googleのセッションを消してページを読み直す
+    return;
+  }
   if (state.realtimeChannel && state.supabase) {
     state.supabase.removeChannel(state.realtimeChannel);
     state.realtimeChannel = null;
@@ -296,7 +339,7 @@ function handleLogout() {
 function enterApp() {
   els.loginScreen.classList.add('hidden');
   els.app.classList.remove('hidden');
-  els.roleText.textContent = ROLE_LABELS[state.role];
+  els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
   boot();
 }

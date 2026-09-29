@@ -188,6 +188,18 @@
 - `app_users`・`branch_regions`はRLS有効・ポリシーなし（service_roleからのみアクセス）。既存テーブルのRLSポリシーは変えていない
 - 退会者は削除せず`status`をdisabledにする（外部キーはno actionのため、参照されているユーザーは削除できない）
 
+### 段階3-1で入れたもの（Googleログインと共通パスワードの並行運用）
+- ログイン画面（スケジュール・日程調整・備品管理・候補管理）に「Googleでログイン」を追加。共通パスワードのログインも残す。どちらか一方だけが有効（Googleで始めると保存済みの共通パスワードを消し、共通パスワードでログインするとGoogleのセッションを消す）
+  - supabase-js は PKCE（`flowType: 'pkce'`）。戻り先は元のページ（`?event=`・`?id=`を含む）。戻ったあと`?code=`はURLから消す
+  - アプリ内ブラウザ（チャットワーク・LINE等）ではGoogleがログインを拒否するため、「SafariやChromeで開いてください」の案内を出す
+  - ログイン画面から`privacy.html`（プライバシーポリシー）へリンク
+- Googleログイン後: `app_users`に行が無い → 登録画面（表示名＋所属支部）→ 承認待ち／`pending` → 承認待ち画面／`disabled` → 利用できない旨の画面／`active` → アプリ本体。Googleから戻った直後に`last_login_at`を記録
+- Googleでログイン中はヘッダーの名前をGoogleの表示名で固定（編集できない）。保存済みの名前（localStorage）は書き換えない
+- API（`api/users.js`、`?action=`で分岐）: me・register・login・list・update（承認／無効化／再有効化／管理者の種類の変更）。トークンの検証と権限判定は`api/_lib/user-auth.js`
+- 既存APIは`resolveRequestRole`で「共通パスワード、または`active`のGoogleユーザーのトークン」を受け付ける。グランドマスターは今の管理者相当、県連管理者・支部管理者・一般は今の一般相当（本人判定は名前の比較のまま。3-2で見直す）
+- ユーザー管理画面（`users.html`）: Googleでログインした管理者だけが使える。入口はスケジュール画面のヘッダーの「👥 ユーザー管理」（管理者にだけ表示）
+- 最初のグランドマスターは、Googleで登録したあとSQL Editorで`is_admin = true`・`status = 'active'`にする。`is_admin`はAPIでは変更できない
+
 ### 権限の方針（段階3のAPIで実装する。0018では変更なし）
 - **管理者の種類**
   - グランドマスター（`is_admin = true`）：全支部で全権限。何かあったときの最終対応役

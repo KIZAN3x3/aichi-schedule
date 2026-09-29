@@ -2194,3 +2194,222 @@ thead .coordination-col-count-no {
 .coordination-mark-radio-label.is-checked .coordination-mark-radio-symbol {
   color: #fff;
 }
+
+/* ===================== Googleログイン（段階3-1） ===================== */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.btn-google {
+  width: 100%;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+
+.btn-google:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.login-note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--danger);
+  text-align: left;
+}
+
+.login-privacy-link {
+  display: inline-block;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Googleでログイン中は、ヘッダーの名前はGoogleの表示名で固定（押しても編集欄を開かない） */
+.status-name-btn:disabled,
+.status-name-btn.is-locked {
+  cursor: default;
+  opacity: 1;
+  color: var(--text);
+}
+
+.status-name-static {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere; /* 狭い画面でも名前を省略せず折り返して見せる */
+  font-weight: 600;
+}
+
+/* 登録・承認待ち・無効の画面 */
+.account-gate-title {
+  margin: 16px 0 8px;
+  font-size: 18px;
+  color: var(--orange-dark);
+}
+
+.account-gate-text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  text-align: left;
+}
+
+.account-gate-email {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.account-gate-form {
+  text-align: left;
+}
+
+.account-gate-form label {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.account-gate-form input,
+.account-gate-form select {
+  width: 100%;
+  padding: 12px;
+  font-size: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  font-family: inherit;
+  background: #fff;
+}
+
+.account-gate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* ユーザー管理画面 */
+.users-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.users-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.users-scope-text {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.users-group {
+  margin-top: 20px;
+}
+
+.users-group-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--orange-dark);
+}
+
+.user-card {
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.user-card-name {
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.user-card-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--orange-mid);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.user-card-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.user-card-meta dt {
+  color: var(--text-muted);
+}
+
+.user-card-meta dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.user-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.user-card-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 14px;
+}
+
+.user-card-scope label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.user-card-scope select {
+  padding: 6px 8px;
+  font-size: 15px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-family: inherit;
+}

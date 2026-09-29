@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ユーザー管理 - 愛知活動スケジュール＆備品管理</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div id="boot-loading" class="boot-loading">
+  <div class="boot-loading-spinner"></div>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="app-header">
+    <h1 class="app-title">愛知活動スケジュール<wbr>＆備品管理</h1>
+    <div class="status-bar">
+      <span id="role-dot" class="status-dot"></span>
+      <span id="role-text" class="status-role"></span>
+      <span class="status-sep">・</span>
+      <span id="name-display-value" class="status-name-static"></span>
+      <button type="button" id="logout-btn" class="status-logout-btn" title="ログアウト" aria-label="ログアウト">ログアウト</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <a href="index.html" class="back-link">← スケジュールに戻る</a>
+
+    <section id="users-notice" class="panel hidden">
+      <p id="users-notice-text" class="hint-text"></p>
+      <a href="index.html" class="btn btn-outline btn-small">スケジュール画面へ</a>
+    </section>
+
+    <section id="users-panel" class="panel users-panel hidden">
+      <div class="users-panel-header">
+        <h2 class="users-title">ユーザー管理</h2>
+        <button type="button" id="users-reload-btn" class="btn btn-outline btn-small">↻ 読み直す</button>
+      </div>
+      <p id="users-scope-text" class="users-scope-text"></p>
+      <div id="users-list"></div>
+    </section>
+  </main>
+</div>
+
+<script type="module" src="js/users.js"></script>
+</body>
+</html>
