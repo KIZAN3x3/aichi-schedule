@@ -3,7 +3,6 @@ import {
   setupGoogleLogin,
   loadGoogleAccount,
   showAccountGate,
-  signOutLocal,
   googleLogout,
   lockHeaderName,
   roleLabelOf,
@@ -15,8 +14,6 @@ import { api } from './api.js';
 import { OWNER_BRANCH_OPTIONS, SHARED_OWNER_BRANCHES } from './owner-branches.js';
 import { createOptionPicker, groupKindOptions, kindChoicesFor, OPTION_MAX_LENGTH } from './equipment-options.js';
 
-const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
-const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION = 1600;
@@ -28,10 +25,9 @@ const REALTIME_ECHO_TIMEOUT_MS = 5000;
 const QUANTITY_SAVE_DEBOUNCE_MS = 1000;
 
 const state = {
-  googleUser: null, // Googleでログイン中の利用者（app_usersの行）。共通パスワードのときはnull
+  googleUser: null, // ログインしている利用者（app_usersの行）
   role: null,
-  password: null,
-  myName: '',
+  myName: '', // ログインしている人の表示名（app_users.display_name）
   items: [],
   supabase: null,
   realtimeChannel: null,
@@ -55,17 +51,12 @@ const state = {
 const els = {
   bootLoading: document.getElementById('boot-loading'),
   loginScreen: document.getElementById('login-screen'),
-  loginForm: document.getElementById('login-form'),
-  passwordInput: document.getElementById('password-input'),
   loginError: document.getElementById('login-error'),
   app: document.getElementById('app'),
   roleDot: document.getElementById('role-dot'),
   roleText: document.getElementById('role-text'),
   logoutBtn: document.getElementById('logout-btn'),
-  nameDisplayBtn: document.getElementById('name-display-btn'),
   nameDisplayValue: document.getElementById('name-display-value'),
-  nameEditWrap: document.getElementById('name-edit-wrap'),
-  nameInput: document.getElementById('name-input'),
   newItemToggleBtn: document.getElementById('new-item-toggle-btn'),
   itemForm: document.getElementById('item-form'),
   itemFormError: document.getElementById('item-form-error'),
@@ -188,10 +179,10 @@ function populateOwnerBranchSelect(selectEl, { includeBlank, blankLabel } = {}) 
   }
 }
 
-// 新規登録の所有の初期値: Googleの人は自分の所属支部、共通パスワードの人は未定（空欄）。
+// 新規登録の所有の初期値: 自分の所属支部。
 // 選択肢は全員同じ（19択＋未定）。defaultSelected にしておくと、登録後の form.reset() でもこの値に戻る
 function setNewItemOwnerDefault() {
-  const defaultValue = state.googleUser ? state.googleUser.branch : '';
+  const defaultValue = state.googleUser.branch;
   for (const option of els.itemOwnerBranch.options) {
     option.defaultSelected = option.value === defaultValue;
   }
@@ -209,31 +200,13 @@ function syncIsSharedCheckbox(ownerBranchSelectEl, isSharedCheckboxEl) {
 }
 
 function bindStaticEvents() {
-  els.loginForm.addEventListener('submit', handleLoginSubmit);
-
-  els.nameDisplayBtn.addEventListener('click', () => {
-    els.nameInput.value = state.myName;
-    els.nameDisplayBtn.classList.add('hidden');
-    els.nameEditWrap.classList.remove('hidden');
-    els.nameInput.focus();
-    els.nameInput.select();
-  });
-
-  els.nameInput.addEventListener('blur', saveNameEdit);
-  els.nameInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      els.nameInput.blur();
-    }
-  });
-
   els.logoutBtn.addEventListener('click', handleLogout);
 
   els.newItemToggleBtn.addEventListener('click', () => {
     const isHidden = els.itemForm.classList.toggle('hidden');
     els.newItemToggleBtn.textContent = isHidden ? '＋ 備品を登録' : '閉じる';
     if (!isHidden) {
-      els.itemUpdatedBy.value = state.myName;
+      els.itemUpdatedBy.textContent = state.myName;
       els.itemFormError.textContent = '';
     }
   });
@@ -309,34 +282,8 @@ function previewImageFile(file, imgEl) {
   reader.readAsDataURL(file);
 }
 
-function saveNameEdit() {
-  state.myName = els.nameInput.value.trim();
-  localStorage.setItem('aichi-schedule:name', state.myName);
-  updateNameDisplay();
-  els.nameEditWrap.classList.add('hidden');
-  els.nameDisplayBtn.classList.remove('hidden');
-}
-
-function updateNameDisplay() {
-  els.nameDisplayValue.textContent = state.myName || 'お名前未設定';
-}
-
 async function restoreSession() {
-  const savedName = localStorage.getItem('aichi-schedule:name') || '';
-  state.myName = savedName;
-  updateNameDisplay();
-
-  const savedPassword = localStorage.getItem('aichi-schedule:password');
-  const savedRole = localStorage.getItem('aichi-schedule:role');
-  if (savedPassword && savedRole) {
-    els.bootLoading.classList.add('hidden');
-    state.password = savedPassword;
-    state.role = savedRole;
-    enterApp();
-    return;
-  }
-
-  // 共通パスワードが無ければ、Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
+  // Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
   let account = null;
   try {
     account = await loadGoogleAccount();
@@ -354,54 +301,20 @@ async function restoreSession() {
     return;
   }
   state.googleUser = account.user;
-  state.password = null;
   state.role = legacyRoleOf(account.user);
-  state.myName = account.user.display_name; // 保存済みの名前(localStorage)は書き換えない
+  state.myName = account.user.display_name;
   lockHeaderName(els, account.user);
   enterApp();
 }
 
-async function handleLoginSubmit(event) {
-  event.preventDefault();
-  const password = els.passwordInput.value.trim();
-  const role = PASSWORD_ROLES[password];
-  if (!role) {
-    els.loginError.textContent = 'パスワードが違います';
-    return;
-  }
-  // 共通パスワードでログインするときは、Googleのセッションが残っていれば消す（どちらか一方だけにする）
-  await signOutLocal().catch((err) => console.error(err));
-  state.password = password;
-  state.role = role;
-  localStorage.setItem('aichi-schedule:password', password);
-  localStorage.setItem('aichi-schedule:role', role);
-  enterApp();
-}
-
 function handleLogout() {
-  if (state.googleUser) {
-    googleLogout(); // Googleのセッションを消してページを読み直す
-    return;
-  }
-  if (state.realtimeChannel && state.supabase) {
-    state.supabase.removeChannel(state.realtimeChannel);
-    state.realtimeChannel = null;
-  }
-  localStorage.removeItem('aichi-schedule:password');
-  localStorage.removeItem('aichi-schedule:role');
-  state.password = null;
-  state.role = null;
-
-  els.app.classList.add('hidden');
-  els.loginScreen.classList.remove('hidden');
-  els.passwordInput.value = '';
-  els.loginError.textContent = '';
+  googleLogout(); // Googleのセッションを消してページを読み直す
 }
 
 function enterApp() {
   els.loginScreen.classList.add('hidden');
   els.app.classList.remove('hidden');
-  els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
+  els.roleText.textContent = roleLabelOf(state.googleUser);
   els.roleDot.classList.toggle('admin', state.role === 'admin');
   els.newItemToggleBtn.classList.toggle('hidden', !canCreateEquipment(state));
   setNewItemOwnerDefault();
@@ -1123,14 +1036,6 @@ function createQuantityAdjuster(item, detail) {
       return;
     }
 
-    if (!state.myName) {
-      errorText.textContent = 'お名前を設定してから変更してください';
-      item.quantity = savedQuantity;
-      minusBtn.disabled = item.quantity <= 0;
-      updateDisplays(item.quantity);
-      return;
-    }
-
     saveInFlight = true;
     errorText.textContent = '';
     statusText.textContent = '保存中…';
@@ -1149,11 +1054,7 @@ function createQuantityAdjuster(item, detail) {
     state.pendingRealtimeTimeouts.push(timeoutId);
 
     try {
-      await api.updateEquipment(item.id, {
-        quantity: targetQuantity,
-        updated_by: state.myName,
-        password: state.password,
-      });
+      await api.updateEquipment(item.id, { quantity: targetQuantity });
 
       savedQuantity = targetQuantity;
       statusText.classList.add('hidden');
@@ -1247,18 +1148,16 @@ function createActionsRow(item, detail, historyPanel) {
   deleteBtn.addEventListener('click', async () => {
     if (!confirm(`「${item.item_name}」を削除しますか？`)) return;
     try {
-      await api.deleteEquipment(item.id, { password: state.password });
+      await api.deleteEquipment(item.id, {});
       await fetchItems();
     } catch (err) {
       alert(err.message);
     }
   });
-  // 登録した本人か、所有支部を管理できる管理者だけ（登録した人が空欄の備品は管理者だけ。名前の一致では判定しない）
-  if (!canActOnRowFront(state, { branch: item.owner_branch, userIds: [item.created_by_user_id], names: [] })) {
+  // 登録した本人か、所有支部を管理できる管理者だけ（登録した人が空欄の備品は管理者だけ）
+  if (!canActOnRowFront(state, { branch: item.owner_branch, userIds: [item.created_by_user_id] })) {
     deleteBtn.disabled = true;
-    deleteBtn.title = state.googleUser
-      ? '削除できるのは、登録した本人か、所有する支部を管理する管理者だけです'
-      : '削除はマスター管理者のみ可能です';
+    deleteBtn.title = '削除できるのは、登録した本人か、所有する支部を管理する管理者だけです';
   }
 
   row.appendChild(editBtn);
@@ -1428,10 +1327,13 @@ function enterEditMode(item, detail) {
   memoInput.value = item.memo || '';
   memoInput.placeholder = 'メモ';
 
-  const updatedByInput = document.createElement('input');
-  updatedByInput.type = 'text';
-  updatedByInput.value = state.myName;
-  updatedByInput.placeholder = 'お名前';
+  // 更新者名はログインしている人の表示名（固定表示。APIも表示名を使う）
+  const updatedByText = document.createElement('p');
+  updatedByText.className = 'form-static';
+  updatedByText.append('更新者名：');
+  const updatedByName = document.createElement('span');
+  updatedByName.textContent = state.myName;
+  updatedByText.appendChild(updatedByName);
 
   const errorText = document.createElement('p');
   errorText.className = 'form-error';
@@ -1441,14 +1343,9 @@ function enterEditMode(item, detail) {
   saveBtn.className = 'btn btn-primary btn-small';
   saveBtn.textContent = '保存';
   saveBtn.addEventListener('click', async () => {
-    const updatedBy = updatedByInput.value.trim();
     const itemName = namePicker.getValue();
     if (!itemName) {
       errorText.textContent = '品目名を選ぶか、新しく入力してください';
-      return;
-    }
-    if (!updatedBy) {
-      errorText.textContent = '更新者名を入力してください';
       return;
     }
     saveBtn.disabled = true;
@@ -1464,8 +1361,6 @@ function enterEditMode(item, detail) {
         owner_branch: ownerBranchSelect.value,
         owner_person: ownerPersonInput.value.trim(),
         is_shared: isSharedInput.checked,
-        updated_by: updatedBy,
-        password: state.password,
       };
 
       if (editSelectedImageFile) {
@@ -1511,7 +1406,7 @@ function enterEditMode(item, detail) {
   detail.appendChild(ownerPersonInput);
   detail.appendChild(locationInput);
   detail.appendChild(memoInput);
-  detail.appendChild(updatedByInput);
+  detail.appendChild(updatedByText);
   detail.appendChild(errorText);
   detail.appendChild(actions);
 }
@@ -1578,10 +1473,7 @@ async function uploadImage(file) {
     throw new Error('画像サイズは5MB以内にしてください');
   }
 
-  const { path, token, publicUrl } = await api.getEquipmentUploadUrl({
-    contentType: file.type,
-    password: state.password,
-  });
+  const { path, token, publicUrl } = await api.getEquipmentUploadUrl({ contentType: file.type });
 
   const { error } = await state.supabase.storage
     .from(BUCKET)
@@ -1601,12 +1493,6 @@ async function handleCreateItem(event) {
     els.itemFormError.textContent = '品目名を選ぶか、新しく入力してください';
     return;
   }
-  const updatedBy = els.itemUpdatedBy.value.trim();
-  if (!updatedBy) {
-    els.itemFormError.textContent = '更新者名を入力してください';
-    return;
-  }
-
   const submitLabel = els.itemFormSubmit.textContent;
   els.itemFormSubmit.disabled = true;
   try {
@@ -1632,8 +1518,6 @@ async function handleCreateItem(event) {
       owner_branch: els.itemOwnerBranch.value,
       owner_person: els.itemOwnerPerson.value.trim(),
       is_shared: els.itemIsShared.checked,
-      updated_by: updatedBy,
-      password: state.password,
     });
 
     els.itemForm.reset();

@@ -1,21 +1,21 @@
 const { getSupabaseClient } = require('./_lib/supabase');
 const { resolveActor } = require('./_lib/auth');
-const { regionResolverFor, canManageBranch, canManageSharedOptions, forbiddenMessage } = require('./_lib/permissions');
+const { regionResolverFor, canManageBranch, canManageSharedOptions } = require('./_lib/permissions');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 const { TABLES, EQUIPMENT_OPTION_TABLES, addBranchOption } = require('./_lib/branchOptions');
 
 // GET    /api/branch-options?branch=◯◯&type=place|category    : 支部ごとの過去入力候補を取得
-// POST   /api/branch-options { branch, type, value, password } : 候補を追加（重複はエラーにせず無視）
-// DELETE /api/branch-options { id, type, password }            : 候補を削除
-// 追加・削除は「入力候補の管理」の権限（その支部を管理できる管理者: システム管理者・その県連の県連管理者・
-// 共通パスワードの管理者）。予定の投稿時の自動追加（api/_lib/branchOptions.js）はこのAPIを通らないため影響しない
+// POST   /api/branch-options { branch, type, value } : 候補を追加（重複はエラーにせず無視）
+// DELETE /api/branch-options { id, type }            : 候補を削除
+// 追加・削除は「入力候補の管理」の権限（その支部を管理できる管理者: システム管理者・その県連の県連管理者）。
+// 予定の投稿時の自動追加（api/_lib/branchOptions.js）はこのAPIを通らないため影響しない
 //
 // 備品の品名・種類の候補（全支部共通。migration 0021）も、Vercelの関数の数を増やさないためここで扱う
 //   GET    /api/branch-options?type=item_name : 品名の候補 [{ id, value }]（支部の指定は不要）
 //   GET    /api/branch-options?type=item_kind : 種類の候補 [{ id, item_name, value }]（全品名分）
-//   DELETE /api/branch-options { id, type: 'item_name'|'item_kind', password }
-//     削除できるのは、共通パスワードの管理者・システム管理者・県連管理者（東西どちらも）。
+//   DELETE /api/branch-options { id, type: 'item_name'|'item_kind' }
+//     削除できるのは、システム管理者・県連管理者（東西どちらも）。
 //     品名の候補を消すと、その品名の種類の候補も一緒に消す（備品そのものは消さない）
 //   候補の追加は、備品の登録・編集のときに api/equipment*.js が自動で行う（このAPIのPOSTでは追加できない）
 module.exports = async (req, res) => {
@@ -45,8 +45,8 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === 'POST') {
-    const { branch, type, value, password } = req.body || {};
-    const auth = await resolveActor(req, password);
+    const { branch, type, value } = req.body || {};
+    const auth = await resolveActor(req);
     if (!auth.ok) {
       return sendJson(res, auth.status, { error: auth.error });
     }
@@ -55,9 +55,7 @@ module.exports = async (req, res) => {
       return sendJson(res, 400, { error: '支部が不正です' });
     }
     if (!canManageBranch(actor, branch, await regionResolverFor(actor))) {
-      return sendJson(res, 403, {
-        error: forbiddenMessage(actor, '候補の追加はマスター管理者のみ可能です', 'この支部の入力候補を管理できるのは、この支部を管理する管理者だけです'),
-      });
+      return sendJson(res, 403, { error: 'この支部の入力候補を管理できるのは、この支部を管理する管理者だけです' });
     }
     if (!TABLES[type]) {
       return sendJson(res, 400, { error: 'typeはplaceまたはcategoryを指定してください' });
@@ -73,8 +71,8 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === 'DELETE') {
-    const { id, type, password } = req.body || {};
-    const auth = await resolveActor(req, password);
+    const { id, type } = req.body || {};
+    const auth = await resolveActor(req);
     if (!auth.ok) {
       return sendJson(res, auth.status, { error: auth.error });
     }
@@ -96,9 +94,7 @@ module.exports = async (req, res) => {
       return sendJson(res, 404, { error: '候補が見つかりません' });
     }
     if (!canManageBranch(actor, existing.branch, await regionResolverFor(actor))) {
-      return sendJson(res, 403, {
-        error: forbiddenMessage(actor, '削除はマスター管理者のみ可能です', 'この支部の入力候補を管理できるのは、この支部を管理する管理者だけです'),
-      });
+      return sendJson(res, 403, { error: 'この支部の入力候補を管理できるのは、この支部を管理する管理者だけです' });
     }
 
     const { error } = await supabase.from(table).delete().eq('id', id);
@@ -129,13 +125,7 @@ async function getEquipmentOptions(res, type) {
 // （種類を先に消し、そのあと品名を消す。途中で失敗しても、品名が残っているので画面からやり直せる）
 async function deleteEquipmentOption(res, actor, { id, type }) {
   if (!canManageSharedOptions(actor)) {
-    return sendJson(res, 403, {
-      error: forbiddenMessage(
-        actor,
-        '削除はマスター管理者のみ可能です',
-        '備品の品名・種類の候補を管理できるのは、システム管理者・県連管理者だけです'
-      ),
-    });
+    return sendJson(res, 403, { error: '備品の品名・種類の候補を管理できるのは、システム管理者・県連管理者だけです' });
   }
   if (!id || typeof id !== 'string') {
     return sendJson(res, 400, { error: 'idが必要です' });

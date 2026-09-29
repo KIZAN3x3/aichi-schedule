@@ -1,13 +1,21 @@
 // Googleログイン（Supabase Auth）の共通処理。スケジュール・日程調整・備品管理・候補管理・ユーザー管理の各画面で使う。
-// 共通パスワードのログインと並行して運用する（どちらか一方だけが有効になるようにしている）。
-//   ・Googleでログインを始めるとき: 保存済みの共通パスワードを消す
-//   ・共通パスワードでログインするとき: Googleのセッションからログアウトする（signOutLocal）
+// ログインはGoogleだけ（共通パスワードのログインは段階5で廃止した）。
 import { getSupabaseClient } from './supabase-client.js';
 import { BRANCHES, REGION_OF_BRANCH } from './branches.js';
 
 // Googleから戻ってきた直後に1回だけ「最終ログイン日時」を記録するための目印（ページをまたいで残るようsessionStorage）
 const GOOGLE_LOGIN_PENDING_KEY = 'aichi-schedule:googleLoginPending';
-const PASSWORD_KEYS = ['aichi-schedule:password', 'aichi-schedule:role'];
+// APIが401を返してログイン画面に戻すときに、ログイン画面に出す文言（読み直しをまたぐためsessionStorage）
+const LOGIN_MESSAGE_KEY = 'aichi-schedule:loginMessage';
+// 共通パスワードの時期に端末に保存していた値（パスワード・権限・手入力の名前）。ページを開いたときに消す
+const LEGACY_LOGIN_KEYS = ['aichi-schedule:password', 'aichi-schedule:role', 'aichi-schedule:name'];
+
+// このファイルを読み込んだ時点（＝どの画面も開いた直後）で、共通パスワードの時期の値を消す
+try {
+  for (const key of LEGACY_LOGIN_KEYS) localStorage.removeItem(key);
+} catch (err) {
+  // 保存領域が使えない環境でも画面は続ける
+}
 // Googleから戻ってきたときにURLに付く値（PKCEのcodeと、失敗時のerror）。処理後にURLから消す
 const OAUTH_URL_PARAMS = ['code', 'error', 'error_code', 'error_description'];
 
@@ -27,14 +35,14 @@ export function roleLabelOf(user) {
   return KIND_LABELS[adminKindOf(user)] || '一般';
 }
 
-// 既存APIでの権限（api/_lib/auth.js の resolveRequestRole と同じ当てはめ）
+// APIでの権限（api/_lib/auth.js の resolveActor の actor.role と同じ当てはめ。'admin' = システム管理者）
 export function legacyRoleOf(user) {
   return user && user.is_admin ? 'admin' : 'user';
 }
 
 // ===================== 画面での権限判定（api/_lib/permissions.js と同じ考え方） =====================
 // ボタンの表示・選択肢の絞り込みに使う。本当の判定は API 側で行う。
-// session: 各画面の state（role / googleUser / myName を持つ）
+// session: 各画面の state（googleUser = ログインしている人の app_users の行 を持つ）
 
 // Googleの県連管理者の、自分の県連の支部
 export function regionBranchesOf(user) {
@@ -42,40 +50,39 @@ export function regionBranchesOf(user) {
   return region ? BRANCHES.filter((b) => REGION_OF_BRANCH[b] === region) : [];
 }
 
-// その支部のデータを管理できる管理者か（システム管理者・共通パスワードの管理者は全支部、県連管理者は自分の県連内）
+// その支部のデータを管理できる管理者か（システム管理者は全支部、県連管理者は自分の県連内）
 export function canManageBranchData(session, branch) {
-  if (session.role === 'admin') return true;
   const user = session.googleUser;
-  if (user && adminKindOf(user) === 'region') return regionBranchesOf(user).includes(branch);
+  const kind = adminKindOf(user);
+  if (kind === 'grand') return true;
+  if (kind === 'region') return regionBranchesOf(user).includes(branch);
   return false;
 }
 
-// 県連管理者を含め、データを管理できる管理者か（候補管理・CSV出力・備品の登録ボタンを出すかどうか）
+// 県連管理者を含め、データを管理できる管理者か（候補管理・CSV出力のボタンを出すかどうか）
 export function isDataManager(session) {
-  return session.role === 'admin' || adminKindOf(session.googleUser) === 'region';
+  const kind = adminKindOf(session.googleUser);
+  return kind === 'grand' || kind === 'region';
 }
 
-// 備品を新規登録できるか（Googleでログインした有効な利用者は全員、共通パスワードは管理者だけ）
+// 備品を新規登録できるか（ログインしている有効な利用者は全員）
 export function canCreateEquipment(session) {
-  return Boolean(session.googleUser) || session.role === 'admin';
+  return Boolean(session.googleUser);
 }
 
 // 行に対して本人（または管理者）として操作できるか
-//   row.branch: その行の支部 / row.userIds: 本人のユーザーID / row.names: 本人の名前（IDが空欄の行だけで使う）
-//   ・IDが入っている行: Googleの本人だけ
-//   ・IDが空欄の行: 共通パスワードの一般の人は名前の一致で可、Googleの一般の人は不可
+//   row.branch: その行の支部 / row.userIds: 本人のユーザーID
+//   ・IDが入っている行: 本人か、その支部を管理できる管理者
+//   ・IDが空欄の行（移行前の行）: その支部を管理できる管理者だけ
 export function canActOnRowFront(session, row) {
   if (canManageBranchData(session, row.branch)) return true;
   const ids = (row.userIds || []).filter(Boolean);
-  if (ids.length > 0) return Boolean(session.googleUser) && ids.includes(session.googleUser.id);
-  if (session.googleUser) return false;
-  return Boolean(session.myName) && (row.names || []).filter(Boolean).includes(session.myName);
+  return Boolean(session.googleUser) && ids.includes(session.googleUser.id);
 }
 
 // 参加・回答の行の本人か（管理者かどうかは見ない。「あなた：参加」などの表示に使う）
 export function isMyParticipation(session, row) {
-  if (session.googleUser) return row.participant_user_id === session.googleUser.id;
-  return Boolean(session.myName) && !row.participant_user_id && row.participant_name === session.myName;
+  return Boolean(session.googleUser) && row.participant_user_id === session.googleUser.id;
 }
 
 // Googleのセッションがあれば、最新のアクセストークンで Authorization ヘッダーを作る。
@@ -87,7 +94,21 @@ export async function getAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// api/users.js を呼ぶ（トークン必須）
+// APIが401（ログインしていない・トークンが無効）を返したときに、ログイン画面に戻す。
+// この端末のGoogleセッションを消してページを読み直し、ログイン画面に文言を出す
+export async function redirectToLogin(message = 'ログインし直してください') {
+  try {
+    sessionStorage.setItem(LOGIN_MESSAGE_KEY, message);
+    await signOutLocal();
+  } catch (err) {
+    console.error(err);
+  } finally {
+    location.reload();
+  }
+}
+
+// api/users.js を呼ぶ（トークン必須）。me・login 以外で401なら、ログイン画面に戻す
+// （me の401は loadGoogleAccount がログイン画面を出すので、ここでは戻さない）
 export async function usersApi(action, method, body) {
   const options = { method, headers: await getAuthHeaders() };
   if (body !== undefined) {
@@ -98,6 +119,7 @@ export async function usersApi(action, method, body) {
   const contentType = res.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await res.json() : null;
   if (!res.ok) {
+    if (res.status === 401 && action !== 'me' && action !== 'login') redirectToLogin();
     const err = new Error((data && data.error) || `エラーが発生しました (${res.status})`);
     err.status = res.status;
     throw err;
@@ -125,6 +147,12 @@ export function setupGoogleLogin() {
   const btn = document.getElementById('google-login-btn');
   const note = document.getElementById('inapp-browser-note');
   if (note) note.classList.toggle('hidden', !isInAppBrowser());
+  // APIの401でログイン画面に戻ってきたときの文言
+  const message = sessionStorage.getItem(LOGIN_MESSAGE_KEY);
+  if (message) {
+    sessionStorage.removeItem(LOGIN_MESSAGE_KEY);
+    showLoginError(message);
+  }
   if (!btn) return;
   btn.addEventListener('click', async () => {
     btn.disabled = true;
@@ -141,7 +169,6 @@ export function setupGoogleLogin() {
 
 // Googleの認証画面へ移動する。戻り先は今のページ（?event= や ?id= を含む。#以降は除く）
 async function startGoogleLogin() {
-  for (const key of PASSWORD_KEYS) localStorage.removeItem(key);
   sessionStorage.setItem(GOOGLE_LOGIN_PENDING_KEY, '1');
   const supabase = await getSupabaseClient();
   const redirectTo = `${location.origin}${location.pathname}${location.search}`;
@@ -176,7 +203,6 @@ export async function loadGoogleAccount() {
 
   if (sessionStorage.getItem(GOOGLE_LOGIN_PENDING_KEY)) {
     sessionStorage.removeItem(GOOGLE_LOGIN_PENDING_KEY);
-    for (const key of PASSWORD_KEYS) localStorage.removeItem(key);
     try {
       await usersApi('login', 'POST');
     } catch (err) {
@@ -190,6 +216,7 @@ export async function loadGoogleAccount() {
     if (err.status === 401) {
       // トークンが無効（削除されたユーザー等）。セッションを捨ててログイン画面に戻す
       await signOutLocal();
+      showLoginError('ログインし直してください');
       return null;
     }
     throw err;
@@ -214,13 +241,9 @@ export async function googleLogout() {
   }
 }
 
-// ヘッダーの名前欄を、Googleの表示名で固定する（押しても編集欄を開かない）
+// ヘッダーの名前欄に、Googleの表示名を出す（固定表示。表示名の変更はユーザー管理で管理者が行う）
 export function lockHeaderName(els, user) {
   els.nameDisplayValue.textContent = user.display_name;
-  els.nameDisplayBtn.disabled = true;
-  els.nameDisplayBtn.classList.add('is-locked');
-  els.nameDisplayBtn.title = 'Googleでログイン中は、表示名はここでは変更できません';
-  els.nameEditWrap.classList.add('hidden');
 }
 
 // ===================== 登録・承認待ち・無効の画面 =====================

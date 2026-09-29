@@ -190,44 +190,6 @@ body {
   opacity: 0.5;
 }
 
-.status-name-btn {
-  flex: 1;
-  min-width: 80px;
-  display: flex;
-  align-items: center;
-  background: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 12px;
-  color: var(--text);
-  font: inherit;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: left;
-}
-
-.status-name-btn span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.status-name-edit {
-  flex: 1;
-  min-width: 0;
-}
-
-.status-name-edit input {
-  width: 100%;
-  min-width: 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: none;
-  font-size: 16px;
-  font-family: inherit;
-}
-
 .status-logout-btn {
   flex: none;
   width: auto;
@@ -2304,22 +2266,24 @@ thead .coordination-col-count-no {
   color: #fff;
 }
 
-/* ===================== Googleログイン（段階3-1） ===================== */
-.login-divider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 18px 0 12px;
+/* ===================== Googleログイン ===================== */
+.login-lead {
+  margin: 16px 0 12px;
+  font-size: 14px;
   color: var(--text-muted);
-  font-size: 13px;
 }
 
-.login-divider::before,
-.login-divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
+/* フォームの中の、ログインしている人の名前の固定表示（投稿者名・作成者名・更新者名） */
+.form-static {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.form-static span {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .btn-google {
@@ -2349,14 +2313,7 @@ thead .coordination-col-count-no {
   color: var(--text-muted);
 }
 
-/* Googleでログイン中は、ヘッダーの名前はGoogleの表示名で固定（押しても編集欄を開かない） */
-.status-name-btn:disabled,
-.status-name-btn.is-locked {
-  cursor: default;
-  opacity: 1;
-  color: var(--text);
-}
-
+/* ヘッダーの名前は、Googleの表示名の固定表示 */
 .status-name-static {
   /* 7文字分より狭くなるなら、1文字ずつ縦に折り返さず、次の行に回す（ステータスバーは flex-wrap） */
   flex: 1 1 7em;

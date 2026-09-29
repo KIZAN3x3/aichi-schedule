@@ -15,14 +15,9 @@
 <section id="login-screen" class="login-screen hidden">
   <div class="login-card">
     <h1 class="app-title">愛知活動スケジュール<wbr>＆備品管理</h1>
-    <form id="login-form" class="login-form">
-      <label for="password-input">パスワード</label>
-      <input type="password" id="password-input" inputmode="numeric" autocomplete="off" required />
-      <button type="submit" class="btn btn-primary">入る</button>
-      <p id="login-error" class="form-error"></p>
-    </form>
-    <div class="login-divider"><span>または</span></div>
+    <p class="login-lead">Googleアカウントでログインしてください。</p>
     <button type="button" id="google-login-btn" class="btn btn-google">Googleでログイン</button>
+    <p id="login-error" class="form-error"></p>
     <p id="inapp-browser-note" class="login-note hidden">チャットワーク・LINEなどのアプリ内ブラウザでは、Googleでログインできません。SafariやChromeで開いてください。</p>
     <a href="privacy.html" class="login-privacy-link">プライバシーポリシー</a>
   </div>
@@ -35,12 +30,7 @@
       <span id="role-dot" class="status-dot"></span>
       <span id="role-text" class="status-role"></span>
       <span class="status-sep">・</span>
-      <button type="button" id="name-display-btn" class="status-name-btn">
-        <span id="name-display-value">お名前未設定</span>
-      </button>
-      <span id="name-edit-wrap" class="status-name-edit hidden">
-        <input type="text" id="name-input" placeholder="お名前" maxlength="20" />
-      </span>
+      <span id="name-display-value" class="status-name-static"></span>
       <button type="button" id="logout-btn" class="status-logout-btn" title="ログアウト" aria-label="ログアウト">ログアウト</button>
     </div>
   </header>
@@ -106,10 +96,7 @@
           メモ（任意）
           <textarea id="item-memo" placeholder="メモ"></textarea>
         </label>
-        <label>
-          更新者名
-          <input type="text" id="item-updated-by" placeholder="お名前" required />
-        </label>
+        <p class="form-static">更新者名：<span id="item-updated-by"></span></p>
         <p id="item-form-error" class="form-error"></p>
         <button type="submit" class="btn btn-primary" id="item-form-submit">登録する</button>
       </form>

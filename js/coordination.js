@@ -5,10 +5,10 @@ import { formatDateWithWeekday } from './date-utils.js';
 import { replaceChatworkBrackets, chatworkInfo, createShareActions as createCopyButtons } from './share.js';
 import {
   getAuthHeaders,
+  redirectToLogin,
   setupGoogleLogin,
   loadGoogleAccount,
   showAccountGate,
-  signOutLocal,
   googleLogout,
   lockHeaderName,
   roleLabelOf,
@@ -16,8 +16,6 @@ import {
   canActOnRowFront,
 } from './auth.js';
 
-const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
-const ROLE_LABELS = { user: '一般', admin: '管理者' };
 const MARK_LABELS = { yes: '〇', maybe: '△', no: '✕' };
 const MARK_ARIA_LABELS = { yes: '参加できる', maybe: '未定', no: '参加できない' };
 const COMMENT_MAX = 200;
@@ -28,7 +26,7 @@ const MIN_CANDIDATES_MESSAGE =
   '日程調整は候補日を2つ以上入れてください。日にちが決まっている場合は、スケジュール画面から予定として登録してください。';
 
 // api/*.js への薄いラッパー（js/api.jsのrequest()と同じ実装。このページ単体で完結させるため複製している）
-// Googleでログイン中なら、呼ぶたびに最新のアクセストークンを Authorization: Bearer で付ける
+// 呼ぶたびに最新のアクセストークンを Authorization: Bearer で付ける。401ならログイン画面に戻す
 async function request(path, method, body) {
   const options = { method, headers: await getAuthHeaders() };
   if (body !== undefined) {
@@ -39,6 +37,7 @@ async function request(path, method, body) {
   const contentType = res.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await res.json() : null;
   if (!res.ok) {
+    if (res.status === 401) redirectToLogin();
     throw new Error((data && data.error) || `エラーが発生しました (${res.status})`);
   }
   return data;
@@ -70,8 +69,7 @@ let pendingCoordinationId = new URLSearchParams(location.search).get('id');
 
 const state = {
   role: null,
-  password: null,
-  myName: '',
+  myName: '', // ログインしている人の表示名（app_users.display_name）
   branch: '',
   coordinations: [],
   supabase: null,
@@ -81,24 +79,18 @@ const state = {
   // requireStatusが指定されていれば、その状態で描画されるまで待つ（古い一覧での空振りを防ぐ）
   pendingScroll: null, // { id, requireStatus }
   endedGroupOpen: false, // 「終わった日程調整」グループの開閉（Realtimeでの再描画をまたいで保持する）
-  pendingNameAction: null, // 表示名未設定で回答ボタンを押した場合の再開用コールバック
-  googleUser: null, // Googleでログイン中の利用者（app_usersの行）。共通パスワードのときはnull
+  googleUser: null, // ログインしている利用者（app_usersの行）
 };
 
 const els = {
   bootLoading: document.getElementById('boot-loading'),
   loginScreen: document.getElementById('login-screen'),
-  loginForm: document.getElementById('login-form'),
-  passwordInput: document.getElementById('password-input'),
   loginError: document.getElementById('login-error'),
   app: document.getElementById('app'),
   roleDot: document.getElementById('role-dot'),
   roleText: document.getElementById('role-text'),
   logoutBtn: document.getElementById('logout-btn'),
-  nameDisplayBtn: document.getElementById('name-display-btn'),
   nameDisplayValue: document.getElementById('name-display-value'),
-  nameEditWrap: document.getElementById('name-edit-wrap'),
-  nameInput: document.getElementById('name-input'),
   branchSelect: document.getElementById('branch-select'),
   newCoordinationToggleBtn: document.getElementById('new-coordination-toggle-btn'),
   coordinationForm: document.getElementById('coordination-form'),
@@ -198,23 +190,6 @@ function bindCategoryToggle() {
 }
 
 function bindStaticEvents() {
-  els.loginForm.addEventListener('submit', handleLoginSubmit);
-
-  els.nameDisplayBtn.addEventListener('click', () => {
-    els.nameInput.value = state.myName;
-    els.nameDisplayBtn.classList.add('hidden');
-    els.nameEditWrap.classList.remove('hidden');
-    els.nameInput.focus();
-    els.nameInput.select();
-  });
-  els.nameInput.addEventListener('blur', saveNameEdit);
-  els.nameInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      els.nameInput.blur();
-    }
-  });
-
   els.logoutBtn.addEventListener('click', handleLogout);
 
   els.branchSelect.addEventListener('change', () => {
@@ -237,46 +212,14 @@ function bindStaticEvents() {
   });
 }
 
-function saveNameEdit() {
-  state.myName = els.nameInput.value.trim();
-  localStorage.setItem('aichi-schedule:name', state.myName);
-  updateNameDisplay();
-  els.nameEditWrap.classList.add('hidden');
-  els.nameDisplayBtn.classList.remove('hidden');
-  renderList();
-  if (state.pendingNameAction) {
-    const action = state.pendingNameAction;
-    state.pendingNameAction = null;
-    if (state.myName) action();
-  }
-}
-
-function updateNameDisplay() {
-  els.nameDisplayValue.textContent = state.myName || 'お名前未設定';
-}
-
 async function restoreSession() {
-  const savedName = localStorage.getItem('aichi-schedule:name') || '';
-  state.myName = savedName;
-  updateNameDisplay();
-
   const savedBranch = localStorage.getItem('aichi-schedule:branch') || '';
   if (savedBranch && BRANCHES.includes(savedBranch)) {
     state.branch = savedBranch;
     els.branchSelect.value = savedBranch;
   }
 
-  const savedPassword = localStorage.getItem('aichi-schedule:password');
-  const savedRole = localStorage.getItem('aichi-schedule:role');
-  if (savedPassword && savedRole) {
-    els.bootLoading.classList.add('hidden');
-    state.password = savedPassword;
-    state.role = savedRole;
-    enterApp();
-    return;
-  }
-
-  // 共通パスワードが無ければ、Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
+  // Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
   let account = null;
   try {
     account = await loadGoogleAccount();
@@ -294,53 +237,20 @@ async function restoreSession() {
     return;
   }
   state.googleUser = account.user;
-  state.password = null;
   state.role = legacyRoleOf(account.user);
-  state.myName = account.user.display_name; // 保存済みの名前(localStorage)は書き換えない
+  state.myName = account.user.display_name;
   lockHeaderName(els, account.user);
   enterApp();
 }
 
-async function handleLoginSubmit(event) {
-  event.preventDefault();
-  const password = els.passwordInput.value.trim();
-  const role = PASSWORD_ROLES[password];
-  if (!role) {
-    els.loginError.textContent = 'パスワードが違います';
-    return;
-  }
-  // 共通パスワードでログインするときは、Googleのセッションが残っていれば消す（どちらか一方だけにする）
-  await signOutLocal().catch((err) => console.error(err));
-  state.password = password;
-  state.role = role;
-  localStorage.setItem('aichi-schedule:password', password);
-  localStorage.setItem('aichi-schedule:role', role);
-  enterApp();
-}
-
 function handleLogout() {
-  if (state.googleUser) {
-    googleLogout(); // Googleのセッションを消してページを読み直す
-    return;
-  }
-  if (state.realtimeChannel && state.supabase) {
-    state.supabase.removeChannel(state.realtimeChannel);
-    state.realtimeChannel = null;
-  }
-  localStorage.removeItem('aichi-schedule:password');
-  localStorage.removeItem('aichi-schedule:role');
-  state.password = null;
-  state.role = null;
-  els.app.classList.add('hidden');
-  els.loginScreen.classList.remove('hidden');
-  els.passwordInput.value = '';
-  els.loginError.textContent = '';
+  googleLogout(); // Googleのセッションを消してページを読み直す
 }
 
 function enterApp() {
   els.loginScreen.classList.add('hidden');
   els.app.classList.remove('hidden');
-  els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
+  els.roleText.textContent = roleLabelOf(state.googleUser);
   els.roleDot.classList.toggle('admin', state.role === 'admin');
   boot();
 }
@@ -704,11 +614,7 @@ function sortedCandidates(coordination) {
 
 // 編集・削除・決定できるか = 作成した本人か、その支部を管理できる管理者（api/coordinations.js と同じ判定）
 function canManage(coordination) {
-  return canActOnRowFront(state, {
-    branch: coordination.branch,
-    userIds: [coordination.created_by_user_id],
-    names: [coordination.created_by],
-  });
+  return canActOnRowFront(state, { branch: coordination.branch, userIds: [coordination.created_by_user_id] });
 }
 
 // 回答を編集・取消できるか = 本人・代理登録した人か、その支部を管理できる管理者（api/coordination-responses.js と同じ判定）
@@ -716,18 +622,7 @@ function isMyResponseRow(coordination, response) {
   return canActOnRowFront(state, {
     branch: coordination.branch,
     userIds: [response.participant_user_id, response.registered_by_user_id],
-    names: [response.participant_name, response.registered_by],
   });
-}
-
-function requireMyName(action) {
-  if (state.myName) {
-    action();
-    return;
-  }
-  state.pendingNameAction = action;
-  alert('先に自分の名前を入力してください（入力後に続きが開きます）');
-  els.nameDisplayBtn.click();
 }
 
 // カード全体を<details>で開閉する。閉じた状態は「題名（M/D作成）＋状態バッジ」の1行だけ
@@ -897,10 +792,10 @@ function createCardActions(coordination) {
     answerBtn.type = 'button';
     answerBtn.className = 'btn btn-primary btn-small';
     answerBtn.textContent = '📝 回答する';
-    answerBtn.addEventListener('click', () => requireMyName(() => openAnswerDialog(coordination, null)));
+    answerBtn.addEventListener('click', () => openAnswerDialog(coordination, null));
     row.appendChild(answerBtn);
 
-    // 編集は調整中のときだけ、作成者本人かマスター管理者に出す（決定・削除と同じ判定）
+    // 編集は調整中のときだけ、作成者本人か、その支部を管理する管理者に出す（決定・削除と同じ判定）
     if (canManage(coordination)) {
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
@@ -1189,8 +1084,7 @@ function resetCoordinationForm() {
   els.coordinationCandidatesList.innerHTML = '';
   els.coordinationCandidatesList.appendChild(createCandidateRow());
   els.coordinationCandidatesList.appendChild(createCandidateRow());
-  els.coordinationCreatedBy.value = state.myName;
-  els.coordinationCreatedBy.readOnly = Boolean(state.googleUser);
+  els.coordinationCreatedBy.textContent = state.myName;
   els.coordinationFormError.textContent = '';
 }
 
@@ -1224,10 +1118,8 @@ async function handleCreateCoordination(event) {
       title: els.coordinationTitle.value.trim(),
       place: els.coordinationPlace.value.trim(),
       content: els.coordinationContent.value.trim(),
-      created_by: els.coordinationCreatedBy.value.trim(),
       reply_deadline: els.coordinationDeadline.value || undefined,
       candidates,
-      password: state.password,
     });
     els.coordinationForm.classList.add('hidden');
     els.newCoordinationToggleBtn.textContent = '＋ 日程調整を作成';
@@ -1250,7 +1142,7 @@ async function handleDeleteCoordination(coordination) {
   const message = `日程調整『${coordination.title}』を削除します。回答${responseCount}人分もすべて消え、元に戻せません。${eventNote}よろしいですか？`;
   if (!confirm(message)) return;
   try {
-    await api.deleteCoordination(coordination.id, { created_by: state.myName, password: state.password });
+    await api.deleteCoordination(coordination.id, {});
     state.accordionOpen.delete(coordination.id);
     await refreshList();
   } catch (err) {
@@ -1385,10 +1277,8 @@ async function handleAnswerSubmit(event) {
     await api.submitResponse({
       coordination_id: answerDialogCtx.coordinationId,
       participant_name: name,
-      registered_by: state.myName, // 必ず操作者本人の名前
       comment,
       answers,
-      password: state.password,
     });
     els.answerDialog.close();
     await refreshList();
@@ -1410,8 +1300,6 @@ async function handleAnswerDialogDelete() {
     await api.deleteResponse({
       coordination_id: coordination.id,
       participant_name: editingResponse.participant_name,
-      requested_by: state.myName,
-      password: state.password,
     });
     els.answerDialog.close();
     await refreshList();
@@ -1531,8 +1419,6 @@ async function handleEditSubmit(event) {
       content: els.editContent.value.trim(),
       reply_deadline: els.editDeadline.value || undefined,
       candidates,
-      created_by: state.myName,
-      password: state.password,
     });
     state.accordionOpen.add(editDialogCtx.coordinationId);
     els.editDialog.close();
@@ -1559,8 +1445,7 @@ function openDecideDialog(coordination, candidate) {
   els.decideCategorySelect.value = '';
   els.decideCategoryOtherWrap.classList.add('hidden');
   els.decideCategoryOther.value = '';
-  els.decideDecidedBy.value = state.myName;
-  els.decideDecidedBy.readOnly = Boolean(state.googleUser);
+  els.decideDecidedBy.textContent = state.myName;
   els.decideRegisterYes.checked = true;
   els.decideRegisterMaybe.checked = false;
   els.decideError.textContent = '';
@@ -1572,11 +1457,6 @@ async function handleDecideSubmit(event) {
   event.preventDefault();
   els.decideError.textContent = '';
 
-  const decidedBy = els.decideDecidedBy.value.trim();
-  if (!decidedBy) {
-    els.decideError.textContent = '投稿者名を入力してください';
-    return;
-  }
   const place = els.decidePlace.value.trim();
   const content = els.decideContent.value.trim();
   if (!place || !content) {
@@ -1601,7 +1481,6 @@ async function handleDecideSubmit(event) {
   els.decideSubmit.disabled = true;
   try {
     await api.decideCoordination(decideDialogCtx.coordinationId, {
-      decided_by: decidedBy,
       candidate_id: decideDialogCtx.candidateId,
       place,
       content,
@@ -1610,7 +1489,6 @@ async function handleDecideSubmit(event) {
       end_time: endTime || undefined,
       register_yes: els.decideRegisterYes.checked,
       register_maybe: els.decideRegisterMaybe.checked,
-      password: state.password,
     });
     els.decideDialog.close();
     // 決定済みは一覧の下へ移動するため、決定した本人の画面だけ、そのカードを開いたままスクロールで追いかける

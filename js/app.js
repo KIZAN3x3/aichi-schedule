@@ -26,7 +26,6 @@ import {
   setupGoogleLogin,
   loadGoogleAccount,
   showAccountGate,
-  signOutLocal,
   googleLogout,
   lockHeaderName,
   roleLabelOf,
@@ -38,8 +37,6 @@ import {
   regionBranchesOf,
 } from './auth.js';
 
-const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
-const ROLE_LABELS = { user: '一般', admin: '管理者' };
 const MY_EVENTS_DISMISSED_KEY = 'aichi-schedule:myEventsDismissed';
 const PARTICIPANT_COMMENT_MAX = 200;
 
@@ -49,8 +46,7 @@ let pendingEventId = new URLSearchParams(location.search).get('event');
 
 const state = {
   role: null,
-  password: null,
-  myName: '',
+  myName: '', // ログインしている人の表示名（app_users.display_name）
   branch: '',
   selectedDate: toDateStr(new Date()),
   calendarMonth: startOfMonth(new Date()),
@@ -65,25 +61,19 @@ const state = {
   branchPlaceOptions: [],
   branchCategoryOptions: [],
   participantDialog: null, // { eventId, status, editing }
-  pendingParticipantOpen: null, // 名前未設定で大ボタンを押した場合の再開用 { eventId, status }
   participantsOpen: new Set(), // 開いている予定カードのevent_id（再描画をまたいで開閉状態を保持）
-  googleUser: null, // Googleでログイン中の利用者（app_usersの行）。共通パスワードのときはnull
+  googleUser: null, // ログインしている利用者（app_usersの行）
 };
 
 const els = {
   bootLoading: document.getElementById('boot-loading'),
   loginScreen: document.getElementById('login-screen'),
-  loginForm: document.getElementById('login-form'),
-  passwordInput: document.getElementById('password-input'),
   loginError: document.getElementById('login-error'),
   app: document.getElementById('app'),
   roleDot: document.getElementById('role-dot'),
   roleText: document.getElementById('role-text'),
   logoutBtn: document.getElementById('logout-btn'),
-  nameDisplayBtn: document.getElementById('name-display-btn'),
   nameDisplayValue: document.getElementById('name-display-value'),
-  nameEditWrap: document.getElementById('name-edit-wrap'),
-  nameInput: document.getElementById('name-input'),
   branchSelect: document.getElementById('branch-select'),
   branchOptionsBtn: document.getElementById('branch-options-btn'),
   csvExportBtn: document.getElementById('csv-export-btn'),
@@ -235,24 +225,6 @@ function renderWeekdayHeader() {
 }
 
 function bindStaticEvents() {
-  els.loginForm.addEventListener('submit', handleLoginSubmit);
-
-  els.nameDisplayBtn.addEventListener('click', () => {
-    els.nameInput.value = state.myName;
-    els.nameDisplayBtn.classList.add('hidden');
-    els.nameEditWrap.classList.remove('hidden');
-    els.nameInput.focus();
-    els.nameInput.select();
-  });
-
-  els.nameInput.addEventListener('blur', saveNameEdit);
-  els.nameInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      els.nameInput.blur();
-    }
-  });
-
   els.branchSelect.addEventListener('change', async () => {
     state.branch = els.branchSelect.value;
     localStorage.setItem('aichi-schedule:branch', state.branch);
@@ -267,8 +239,7 @@ function bindStaticEvents() {
     const isHidden = els.eventForm.classList.toggle('hidden');
     els.newEventToggleBtn.textContent = isHidden ? '＋ この日に予定を追加' : '閉じる';
     if (!isHidden) {
-      els.eventPosterName.value = state.myName;
-      els.eventPosterName.readOnly = Boolean(state.googleUser);
+      els.eventPosterName.textContent = state.myName;
       els.eventCategorySelect.value = '';
       els.eventCategoryOtherWrap.classList.add('hidden');
       els.eventCategoryOther.value = '';
@@ -283,24 +254,6 @@ function bindStaticEvents() {
   els.viewListBtn.addEventListener('click', () => setViewMode('list'));
   els.viewTimelineBtn.addEventListener('click', () => setViewMode('timeline'));
   els.viewMineBtn.addEventListener('click', () => setViewMode('mine'));
-}
-
-function saveNameEdit() {
-  state.myName = els.nameInput.value.trim();
-  localStorage.setItem('aichi-schedule:name', state.myName);
-  updateNameDisplay();
-  els.nameEditWrap.classList.add('hidden');
-  els.nameDisplayBtn.classList.remove('hidden');
-  if (state.viewMode === 'mine') {
-    refreshMyEvents();
-  } else {
-    renderCurrentView();
-  }
-  resumePendingParticipantDialog();
-}
-
-function updateNameDisplay() {
-  els.nameDisplayValue.textContent = state.myName || 'お名前未設定';
 }
 
 function setViewMode(mode) {
@@ -324,10 +277,6 @@ function updateViewToggleUI() {
 }
 
 async function restoreSession() {
-  const savedName = localStorage.getItem('aichi-schedule:name') || '';
-  state.myName = savedName;
-  updateNameDisplay();
-
   const savedBranch = localStorage.getItem('aichi-schedule:branch') || '';
   if (savedBranch && BRANCHES.includes(savedBranch)) {
     state.branch = savedBranch;
@@ -336,17 +285,7 @@ async function restoreSession() {
 
   state.myEventsDismissed = loadDismissedMyEvents();
 
-  const savedPassword = localStorage.getItem('aichi-schedule:password');
-  const savedRole = localStorage.getItem('aichi-schedule:role');
-  if (savedPassword && savedRole) {
-    els.bootLoading.classList.add('hidden');
-    state.password = savedPassword;
-    state.role = savedRole;
-    enterApp();
-    return;
-  }
-
-  // 共通パスワードが無ければ、Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
+  // Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
   let account = null;
   try {
     account = await loadGoogleAccount();
@@ -364,60 +303,26 @@ async function restoreSession() {
     return;
   }
   state.googleUser = account.user;
-  state.password = null;
   state.role = legacyRoleOf(account.user);
-  state.myName = account.user.display_name; // 保存済みの名前(localStorage)は書き換えない
+  state.myName = account.user.display_name;
   lockHeaderName(els, account.user);
   enterApp();
 }
 
-async function handleLoginSubmit(event) {
-  event.preventDefault();
-  const password = els.passwordInput.value.trim();
-  const role = PASSWORD_ROLES[password];
-  if (!role) {
-    els.loginError.textContent = 'パスワードが違います';
-    return;
-  }
-  // 共通パスワードでログインするときは、Googleのセッションが残っていれば消す（どちらか一方だけにする）
-  await signOutLocal().catch((err) => console.error(err));
-  state.password = password;
-  state.role = role;
-  localStorage.setItem('aichi-schedule:password', password);
-  localStorage.setItem('aichi-schedule:role', role);
-  enterApp();
-}
-
 function handleLogout() {
-  if (state.googleUser) {
-    googleLogout(); // Googleのセッションを消してページを読み直す
-    return;
-  }
-  if (state.realtimeChannel && state.supabase) {
-    state.supabase.removeChannel(state.realtimeChannel);
-    state.realtimeChannel = null;
-  }
-  localStorage.removeItem('aichi-schedule:password');
-  localStorage.removeItem('aichi-schedule:role');
-  state.password = null;
-  state.role = null;
-
-  els.app.classList.add('hidden');
-  els.loginScreen.classList.remove('hidden');
-  els.passwordInput.value = '';
-  els.loginError.textContent = '';
+  googleLogout(); // Googleのセッションを消してページを読み直す
 }
 
 function enterApp() {
   els.loginScreen.classList.add('hidden');
   els.app.classList.remove('hidden');
-  els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
+  els.roleText.textContent = roleLabelOf(state.googleUser);
   els.roleDot.classList.toggle('admin', state.role === 'admin');
-  // 候補管理・CSV出力: 共通パスワードの管理者・システム管理者（全支部）と、県連管理者（自分の県連内）
+  // 候補管理・CSV出力: システム管理者（全支部）と、県連管理者（自分の県連内）
   els.branchOptionsBtn.classList.toggle('hidden', !isDataManager(state));
   els.csvExportBtn.classList.toggle('hidden', !isDataManager(state));
   if (adminKindOf(state.googleUser) === 'region') restrictCsvExportBranchOptions();
-  // ユーザー管理は、Googleでログインした管理者（システム管理者・県連管理者・支部管理者）だけ
+  // ユーザー管理は、管理者（システム管理者・県連管理者・支部管理者）だけ
   els.userAdminBtn.classList.toggle('hidden', !adminKindOf(state.googleUser));
   boot();
 }
@@ -567,11 +472,11 @@ async function refreshMyEvents() {
   }
   renderLoadingState();
 
-  let participantsQuery = state.supabase.from('participants').select('event_id').eq('status', 'going');
-  participantsQuery = state.googleUser
-    ? participantsQuery.eq('participant_user_id', state.googleUser.id)
-    : participantsQuery.eq('participant_name', state.myName);
-  const { data: rows, error } = await participantsQuery;
+  const { data: rows, error } = await state.supabase
+    .from('participants')
+    .select('event_id')
+    .eq('status', 'going')
+    .eq('participant_user_id', state.googleUser.id);
 
   if (error) {
     console.error(error);
@@ -767,10 +672,6 @@ function saveDismissedMyEvents() {
 function renderMyEventsBody(errorMessage) {
   els.myEventsView.innerHTML = '';
 
-  if (!state.myName) {
-    els.myEventsView.appendChild(hintEl('先に画面上部で表示名を入力してください'));
-    return;
-  }
   if (errorMessage) {
     els.myEventsView.appendChild(hintEl(errorMessage));
     return;
@@ -830,8 +731,6 @@ function createMyEventRow(event) {
       await api.leaveEvent({
         event_id: event.id,
         participant_name: state.myName,
-        requested_by: state.myName,
-        password: state.password,
       });
       await refreshMyEvents();
     } catch (err) {
@@ -1119,14 +1018,10 @@ function createCategoryBadge(category) {
   return badge;
 }
 
-// 参加の行を編集・取消できるか = 本人の行・自分が代理登録した行、またはその支部を管理できる管理者。
-// Googleの人はユーザーIDで、共通パスワードの一般の人はIDが空欄の行だけ名前で判定する（api/participants.js と同じ）
+// 参加の行を編集・取消できるか = 本人の行・自分が代理登録した行（ユーザーIDで判定）、またはその支部を管理できる管理者。
+// IDが空欄の行（移行前）は管理者だけ（api/participants.js と同じ）
 function isMyRow(event, p) {
-  return canActOnRowFront(state, {
-    branch: event.branch,
-    userIds: [p.participant_user_id, p.registered_by_user_id],
-    names: [p.participant_name, p.registered_by],
-  });
+  return canActOnRowFront(state, { branch: event.branch, userIds: [p.participant_user_id, p.registered_by_user_id] });
 }
 
 function createParticipantsSection(event) {
@@ -1264,7 +1159,7 @@ function createParticipantRow(event, p) {
     cancelBtn.className = 'btn btn-muted btn-small';
     cancelBtn.textContent = '取消';
     cancelBtn.addEventListener('click', async () => {
-      const isSelf = p.participant_name === state.myName;
+      const isSelf = isMyParticipation(state, p);
       const message = isSelf ? '参加を取り消しますか？' : `${p.participant_name}さんの参加を取り消しますか？`;
       if (!confirm(message)) return;
       cancelBtn.disabled = true;
@@ -1272,8 +1167,6 @@ function createParticipantRow(event, p) {
         await api.leaveEvent({
           event_id: event.id,
           participant_name: p.participant_name, // 代理登録した行では自分の名前とは限らない
-          requested_by: state.myName, // 共通パスワードの人の本人判定に使う（Googleの人はユーザーIDで判定）
-          password: state.password,
         });
         await refreshCurrentEvents();
       } catch (err) {
@@ -1295,22 +1188,9 @@ function createParticipantRow(event, p) {
   return row;
 }
 
-// 大ボタン（新規登録の入口）。表示名が未設定なら先に名前入力を求め、入力後に自動でモーダルを開く
+// 大ボタン（新規登録の入口）
 function openNewParticipantDialog(eventId, status) {
-  if (state.myName) {
-    openParticipantDialog(eventId, status, null);
-    return;
-  }
-  state.pendingParticipantOpen = { eventId, status };
-  alert('先に自分の名前を入力してください（入力後に登録画面が開きます）');
-  els.nameDisplayBtn.click(); // 既存の名前編集UIを開く。確定(blur)時に saveNameEdit → resumePendingParticipantDialog
-}
-
-function resumePendingParticipantDialog() {
-  const pending = state.pendingParticipantOpen;
-  state.pendingParticipantOpen = null;
-  if (!pending || !state.myName) return;
-  openParticipantDialog(pending.eventId, pending.status, null);
+  openParticipantDialog(eventId, status, null);
 }
 
 // editRow が null なら新規登録（名前は編集可・初期値は自分の名前）。あれば既存行の編集（名前は読み取り専用・参加区分を切り替え可）
@@ -1381,8 +1261,6 @@ async function handleParticipantSubmit(event) {
     event_id: ctx.eventId,
     participant_name: name,
     status,
-    registered_by: state.myName, // 必ず操作者本人の名前
-    password: state.password,
   };
   // 編集時は空欄=コメント消去として送る。新規時は空欄なら送らない（同名の既存行のコメントを消さないため）
   if (ctx.editing || comment) payload.comment = comment;
@@ -1404,11 +1282,7 @@ function createActionsRow(event, card) {
   row.className = 'event-actions';
 
   // 編集・削除: 投稿した本人か、その支部を管理できる管理者（api/events/[id].js と同じ判定）
-  const canEdit = canActOnRowFront(state, {
-    branch: event.branch,
-    userIds: [event.poster_user_id],
-    names: [event.poster_name],
-  });
+  const canEdit = canActOnRowFront(state, { branch: event.branch, userIds: [event.poster_user_id] });
   // 終了・戻す: 上に加えて、この予定に「参加」で登録している本人
   const isParticipant = event.participants.some((p) => p.status === 'going' && isMyParticipation(state, p));
   const canFinish = canEdit || isParticipant;
@@ -1432,11 +1306,7 @@ function createActionsRow(event, card) {
     finishBtn.addEventListener('click', async () => {
       finishBtn.disabled = true;
       try {
-        await api.updateEvent(event.id, {
-          finished: true,
-          requested_by: state.myName,
-          password: state.password,
-        });
+        await api.updateEvent(event.id, { finished: true });
         await refreshCurrentEvents();
       } catch (err) {
         alert(err.message);
@@ -1452,11 +1322,7 @@ function createActionsRow(event, card) {
     reopenBtn.addEventListener('click', async () => {
       reopenBtn.disabled = true;
       try {
-        await api.updateEvent(event.id, {
-          finished: false,
-          requested_by: state.myName,
-          password: state.password,
-        });
+        await api.updateEvent(event.id, { finished: false });
         await refreshCurrentEvents();
       } catch (err) {
         alert(err.message);
@@ -1474,10 +1340,7 @@ function createActionsRow(event, card) {
     deleteBtn.addEventListener('click', async () => {
       if (!confirm('この予定を削除しますか？')) return;
       try {
-        await api.deleteEvent(event.id, {
-          requested_by: state.myName,
-          password: state.password,
-        });
+        await api.deleteEvent(event.id, {});
         await refreshMonthDates();
         await refreshCurrentEvents();
       } catch (err) {
@@ -1543,8 +1406,6 @@ function enterEditMode(event, card) {
         place: placeInput.value.trim(),
         content: contentInput.value.trim(),
         category: resolveCategoryValue(categorySelect, categoryOtherInput),
-        requested_by: state.myName,
-        password: state.password,
       });
       await refreshCurrentEvents();
     } catch (err) {
@@ -1581,12 +1442,6 @@ async function handleCreateEvent(event) {
     els.eventFormError.textContent = '支部を選択してください';
     return;
   }
-  const posterName = els.eventPosterName.value.trim();
-  if (!posterName) {
-    els.eventFormError.textContent = '投稿者名を入力してください';
-    return;
-  }
-
   try {
     await api.createEvent({
       branch: state.branch,
@@ -1596,8 +1451,6 @@ async function handleCreateEvent(event) {
       place: els.eventPlace.value.trim(),
       content: els.eventContent.value.trim(),
       category: resolveCategoryValue(els.eventCategorySelect, els.eventCategoryOther),
-      poster_name: posterName,
-      password: state.password,
     });
     els.eventForm.reset();
     els.eventForm.classList.add('hidden');
@@ -1683,7 +1536,6 @@ async function handleCsvExportSubmit(event) {
   els.csvExportSubmit.textContent = '出力中...';
   try {
     await downloadCsv({
-      password: state.password,
       type,
       from: type === 'equipment' ? '' : from,
       to: type === 'equipment' ? '' : to,

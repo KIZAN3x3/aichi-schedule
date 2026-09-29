@@ -1,7 +1,8 @@
-import { getAuthHeaders } from './auth.js';
+import { getAuthHeaders, redirectToLogin } from './auth.js';
 
 // api/*.js への薄いラッパー。bodyを渡さなければGETとして送る。
-// Googleでログイン中なら、呼ぶたびに最新のアクセストークンを Authorization: Bearer で付ける
+// 呼ぶたびに最新のアクセストークンを Authorization: Bearer で付ける。
+// 401（ログインしていない・トークンが無効）なら、ログイン画面に戻す（redirectToLogin）
 async function request(path, method, body) {
   const options = { method, headers: await getAuthHeaders() };
   if (body !== undefined) {
@@ -14,6 +15,7 @@ async function request(path, method, body) {
   const data = contentType.includes('application/json') ? await res.json() : null;
 
   if (!res.ok) {
+    if (res.status === 401) redirectToLogin();
     throw new Error((data && data.error) || `エラーが発生しました (${res.status})`);
   }
   return data;
@@ -46,6 +48,7 @@ export async function downloadCsv(params) {
   });
 
   if (!res.ok) {
+    if (res.status === 401) redirectToLogin();
     const contentType = res.headers.get('content-type') || '';
     const data = contentType.includes('application/json') ? await res.json().catch(() => null) : null;
     throw new Error((data && data.error) || `エラーが発生しました (${res.status})`);

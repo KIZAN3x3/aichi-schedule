@@ -4,7 +4,6 @@ import {
   setupGoogleLogin,
   loadGoogleAccount,
   showAccountGate,
-  signOutLocal,
   googleLogout,
   lockHeaderName,
   roleLabelOf,
@@ -14,32 +13,24 @@ import {
   regionBranchesOf,
 } from './auth.js';
 
-const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
-const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
 const TYPE_LABELS = { place: '場所候補', category: 'カテゴリ候補' };
 
 const state = {
   role: null,
-  password: null,
-  myName: '',
+  myName: '', // ログインしている人の表示名（app_users.display_name）
   branch: '',
-  googleUser: null, // Googleでログイン中の利用者（app_usersの行）。共通パスワードのときはnull
+  googleUser: null, // ログインしている利用者（app_usersの行）
 };
 
 const els = {
   bootLoading: document.getElementById('boot-loading'),
   loginScreen: document.getElementById('login-screen'),
-  loginForm: document.getElementById('login-form'),
-  passwordInput: document.getElementById('password-input'),
   loginError: document.getElementById('login-error'),
   app: document.getElementById('app'),
   roleDot: document.getElementById('role-dot'),
   roleText: document.getElementById('role-text'),
   logoutBtn: document.getElementById('logout-btn'),
-  nameDisplayBtn: document.getElementById('name-display-btn'),
   nameDisplayValue: document.getElementById('name-display-value'),
-  nameEditWrap: document.getElementById('name-edit-wrap'),
-  nameInput: document.getElementById('name-input'),
   adminOnlyNotice: document.getElementById('admin-only-notice'),
   branchOptionsPanel: document.getElementById('branch-options-panel'),
   branchOptionsSelect: document.getElementById('branch-options-select'),
@@ -59,24 +50,6 @@ function init() {
 }
 
 function bindStaticEvents() {
-  els.loginForm.addEventListener('submit', handleLoginSubmit);
-
-  els.nameDisplayBtn.addEventListener('click', () => {
-    els.nameInput.value = state.myName;
-    els.nameDisplayBtn.classList.add('hidden');
-    els.nameEditWrap.classList.remove('hidden');
-    els.nameInput.focus();
-    els.nameInput.select();
-  });
-
-  els.nameInput.addEventListener('blur', saveNameEdit);
-  els.nameInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      els.nameInput.blur();
-    }
-  });
-
   els.logoutBtn.addEventListener('click', handleLogout);
 
   for (const branch of BRANCHES) {
@@ -92,34 +65,8 @@ function bindStaticEvents() {
   });
 }
 
-function saveNameEdit() {
-  state.myName = els.nameInput.value.trim();
-  localStorage.setItem('aichi-schedule:name', state.myName);
-  updateNameDisplay();
-  els.nameEditWrap.classList.add('hidden');
-  els.nameDisplayBtn.classList.remove('hidden');
-}
-
-function updateNameDisplay() {
-  els.nameDisplayValue.textContent = state.myName || 'お名前未設定';
-}
-
 async function restoreSession() {
-  const savedName = localStorage.getItem('aichi-schedule:name') || '';
-  state.myName = savedName;
-  updateNameDisplay();
-
-  const savedPassword = localStorage.getItem('aichi-schedule:password');
-  const savedRole = localStorage.getItem('aichi-schedule:role');
-  if (savedPassword && savedRole) {
-    els.bootLoading.classList.add('hidden');
-    state.password = savedPassword;
-    state.role = savedRole;
-    enterApp();
-    return;
-  }
-
-  // 共通パスワードが無ければ、Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
+  // Googleでログインしているかを調べ、利用者の状態で画面を出し分ける
   let account = null;
   try {
     account = await loadGoogleAccount();
@@ -137,53 +84,23 @@ async function restoreSession() {
     return;
   }
   state.googleUser = account.user;
-  state.password = null;
   state.role = legacyRoleOf(account.user);
-  state.myName = account.user.display_name; // 保存済みの名前(localStorage)は書き換えない
+  state.myName = account.user.display_name;
   lockHeaderName(els, account.user);
   enterApp();
 }
 
-async function handleLoginSubmit(event) {
-  event.preventDefault();
-  const password = els.passwordInput.value.trim();
-  const role = PASSWORD_ROLES[password];
-  if (!role) {
-    els.loginError.textContent = 'パスワードが違います';
-    return;
-  }
-  // 共通パスワードでログインするときは、Googleのセッションが残っていれば消す（どちらか一方だけにする）
-  await signOutLocal().catch((err) => console.error(err));
-  state.password = password;
-  state.role = role;
-  localStorage.setItem('aichi-schedule:password', password);
-  localStorage.setItem('aichi-schedule:role', role);
-  enterApp();
-}
-
 function handleLogout() {
-  if (state.googleUser) {
-    googleLogout(); // Googleのセッションを消してページを読み直す
-    return;
-  }
-  localStorage.removeItem('aichi-schedule:password');
-  localStorage.removeItem('aichi-schedule:role');
-  state.password = null;
-  state.role = null;
-
-  els.app.classList.add('hidden');
-  els.loginScreen.classList.remove('hidden');
-  els.passwordInput.value = '';
-  els.loginError.textContent = '';
+  googleLogout(); // Googleのセッションを消してページを読み直す
 }
 
 function enterApp() {
   els.loginScreen.classList.add('hidden');
   els.app.classList.remove('hidden');
-  els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
+  els.roleText.textContent = roleLabelOf(state.googleUser);
   els.roleDot.classList.toggle('admin', state.role === 'admin');
 
-  // 候補管理: 共通パスワードの管理者・システム管理者（全支部）と、県連管理者（自分の県連内の支部だけ）
+  // 候補管理: システム管理者（全支部）と、県連管理者（自分の県連内の支部だけ）
   if (!isDataManager(state)) {
     els.adminOnlyNotice.classList.remove('hidden');
     els.branchOptionsPanel.classList.add('hidden');
@@ -253,7 +170,7 @@ function createOptionRow(row, type) {
     if (!confirm(`「${row.value}」を削除しますか？`)) return;
     deleteBtn.disabled = true;
     try {
-      await api.deleteBranchOption({ id: row.id, type, password: state.password });
+      await api.deleteBranchOption({ id: row.id, type });
       await refreshLists();
     } catch (err) {
       alert(err.message);
@@ -343,7 +260,7 @@ function createEquipmentOptionRow(row, type, labelText, kindCount = 0) {
     if (!confirm(message)) return;
     deleteBtn.disabled = true;
     try {
-      await api.deleteBranchOption({ id: row.id, type, password: state.password });
+      await api.deleteBranchOption({ id: row.id, type });
       await renderEquipmentOptions();
     } catch (err) {
       alert(err.message);

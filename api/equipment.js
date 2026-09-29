@@ -1,6 +1,6 @@
 const { getSupabaseClient } = require('./_lib/supabase');
 const { resolveActor } = require('./_lib/auth');
-const { isGlobalManager, writerName, writerId } = require('./_lib/permissions');
+const { writerName, writerId } = require('./_lib/permissions');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { SHARED_OWNER_BRANCHES, OWNER_BRANCHES } = require('./_lib/branches');
 const { parseItemName, parseItemKind, addEquipmentOptions } = require('./_lib/branchOptions');
@@ -15,31 +15,27 @@ function normalizeQuantity(value) {
 }
 
 // POST /api/equipment : 備品の新規登録
-//   Googleでログインした有効な利用者は全員可（支部管理者・一般を含む）。共通パスワードは管理者だけ（一般は不可）。
+//   Googleでログインした有効な利用者は全員可（支部管理者・一般を含む）。
 //   所有支部は誰でも19択（西県連・東県連・1〜16支部・その他）か未定（空欄）から選べる。
 //   登録した人（created_by・created_by_user_id）はここでだけ入れる（編集では変えない）。
-//   Googleの人は表示名と自分のID、共通パスワードの管理者は送られた名前（IDは空欄）
+//   登録した人・更新者は、ログインしている人の表示名と自分のID（送られた updated_by は使わない）
 //   品名（必須）・種類（item_kind・任意）は表記をそろえて保存し、全支部共通の候補として自動で覚える（migration 0021）
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return methodNotAllowed(res, ['POST']);
   }
 
-  const { item_name, item_kind, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, quantity, is_countable, password } = req.body || {};
-  const auth = await resolveActor(req, password);
+  const { item_name, item_kind, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, quantity, is_countable } = req.body || {};
+  // resolveActor を通るのは、Googleでログインした有効な利用者だけ（全員が登録できる）
+  const auth = await resolveActor(req);
   if (!auth.ok) {
     return sendJson(res, auth.status, { error: auth.error });
   }
   const { actor } = auth;
-  // resolveActor を通った Googleの人は status = 'active' の利用者だけ
-  if (actor.via !== 'google' && !isGlobalManager(actor)) {
-    return sendJson(res, 403, { error: '新規登録はマスター管理者のみ可能です' });
-  }
   if (owner_branch && !OWNER_BRANCHES.includes(owner_branch)) {
     return sendJson(res, 400, { error: '所有の指定が正しくありません' });
   }
-  // 更新者名: Googleの人は表示名（送られた値は使わない）
-  const updated_by = writerName(actor, (req.body || {}).updated_by);
+  const updated_by = writerName(actor);
   if (!item_name || !location || !updated_by) {
     return sendJson(res, 400, { error: '必須項目が不足しています' });
   }

@@ -12,14 +12,14 @@ module.exports = async (req, res) => {
     return methodNotAllowed(res, ['POST']);
   }
 
-  const { branch, date, time, end_time, place, content, category, password } = req.body || {};
-  const auth = await resolveActor(req, password);
+  const { branch, date, time, end_time, place, content, category } = req.body || {};
+  const auth = await resolveActor(req);
   if (!auth.ok) {
     return sendJson(res, auth.status, { error: auth.error });
   }
   const { actor } = auth;
-  // 投稿者名: Googleの人は表示名（送られた値は使わない）。共通パスワードの人は今までどおり送られた値
-  const poster_name = writerName(actor, (req.body || {}).poster_name);
+  // 投稿者名: ログインしている人の表示名（送られた値は使わない）
+  const poster_name = writerName(actor);
   if (!BRANCHES.includes(branch)) {
     return sendJson(res, 400, { error: '支部が不正です' });
   }

@@ -19,8 +19,8 @@ module.exports = async (req, res) => {
     return methodNotAllowed(res, ['POST']);
   }
 
-  const { contentType, password } = req.body || {};
-  const auth = await resolveActor(req, password);
+  const { contentType } = req.body || {};
+  const auth = await resolveActor(req);
   if (!auth.ok) {
     return sendJson(res, auth.status, { error: auth.error });
   }

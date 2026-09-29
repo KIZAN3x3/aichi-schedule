@@ -1,6 +1,6 @@
 const { getSupabaseClient } = require('../_lib/supabase');
 const { resolveActor } = require('../_lib/auth');
-const { regionResolverFor, canActOnRow, writerName, writerId, forbiddenMessage } = require('../_lib/permissions');
+const { regionResolverFor, canActOnRow, writerName, writerId } = require('../_lib/permissions');
 const { sendJson, methodNotAllowed } = require('../_lib/http');
 const { SHARED_OWNER_BRANCHES } = require('../_lib/branches');
 const { parseItemName, parseItemKind, addEquipmentOptions } = require('../_lib/branchOptions');
@@ -15,28 +15,25 @@ function normalizeQuantity(value) {
 }
 
 // PUT /api/equipment/:id    品目名・場所・画像・メモ更新（一般・管理者とも同一権限）
-//                           Googleの人は、更新者名に表示名を使い、ユーザーIDも記録する（送られた updated_by は使わない）
+//                           更新者名はログインしている人の表示名、ユーザーIDも記録する（送られた updated_by は使わない）
 //                           登録した人（created_by・created_by_user_id）は変えない
 //                           品名・種類（item_kind）は、今の値から変わったときだけ表記をそろえて保存し、候補として覚える。
 //                           変わっていなければ保存済みの値をそのまま残す（候補に無い既存の品名も書き換えず、候補にも入れない）
 // DELETE /api/equipment/:id 備品削除。登録した本人（created_by_user_id が自分）か、所有支部を管理できる管理者
-//                           （システム管理者・共通パスワードの管理者は全部。県連管理者は所有支部が自分の県連内のときだけ）。
-//                           登録した人が空欄の備品（移行前・共通パスワードで登録）は管理者だけ（名前の一致では判定しない）
+//                           （システム管理者は全部。県連管理者は所有支部が自分の県連内のときだけ）。
+//                           登録した人が空欄の備品（移行前）は管理者だけ
 module.exports = async (req, res) => {
   const { id } = req.query;
   const supabase = getSupabaseClient();
 
   if (req.method === 'PUT') {
-    const { item_name, item_kind, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, quantity, is_countable, password } = req.body || {};
-    const auth = await resolveActor(req, password);
+    const { item_name, item_kind, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, quantity, is_countable } = req.body || {};
+    const auth = await resolveActor(req);
     if (!auth.ok) {
       return sendJson(res, auth.status, { error: auth.error });
     }
     const { actor } = auth;
-    const updated_by = writerName(actor, (req.body || {}).updated_by);
-    if (!updated_by) {
-      return sendJson(res, 400, { error: 'updated_byが必要です' });
-    }
+    const updated_by = writerName(actor);
 
     const { data: existing, error: fetchError } = await supabase
       .from('equipment')
@@ -125,8 +122,7 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === 'DELETE') {
-    const { password } = req.body || {};
-    const auth = await resolveActor(req, password);
+    const auth = await resolveActor(req);
     if (!auth.ok) {
       return sendJson(res, auth.status, { error: auth.error });
     }
@@ -141,15 +137,8 @@ module.exports = async (req, res) => {
       return sendJson(res, 404, { error: '備品が見つかりません' });
     }
     const regionOf = await regionResolverFor(actor);
-    const owner = { branch: existing.owner_branch, userIds: [existing.created_by_user_id], names: [] };
-    if (!canActOnRow(actor, owner, regionOf)) {
-      return sendJson(res, 403, {
-        error: forbiddenMessage(
-          actor,
-          '削除はマスター管理者のみ可能です',
-          'この備品を削除できるのは、登録した本人か、所有する支部を管理する管理者だけです'
-        ),
-      });
+    if (!canActOnRow(actor, { branch: existing.owner_branch, userIds: [existing.created_by_user_id] }, regionOf)) {
+      return sendJson(res, 403, { error: 'この備品を削除できるのは、登録した本人か、所有する支部を管理する管理者だけです' });
     }
 
     const { error } = await supabase.from('equipment').delete().eq('id', id);
