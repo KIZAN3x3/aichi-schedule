@@ -304,17 +304,20 @@ create trigger trg_coordinations_reopen_on_event_unlink
 -- 決定処理を一括で行うDB関数。events作成・participants一括登録・coordinations更新を
 -- 1トランザクションで行う。FOR UPDATEでの行ロック＋status='open'の再確認により、
 -- 二重クリックでも2件目はopen条件に合わず例外で弾かれる（events重複作成を防ぐ）。
+-- p_decided_by_user_id（migration 0019で追加）: 決定した人のユーザーID。作る予定の poster_user_id と、
+-- 参加者の registered_by_user_id に入れる。参加者の participant_user_id には回答者のIDを引き継ぐ。共通パスワードでの決定は null
 create or replace function public.decide_coordination(
-  p_coordination_id uuid,
-  p_candidate_id    uuid,
-  p_decided_by      text,
-  p_place           text,
-  p_content         text,
-  p_category        text,
-  p_time            time,
-  p_end_time        time,
-  p_register_yes    boolean default true,
-  p_register_maybe  boolean default false
+  p_coordination_id     uuid,
+  p_candidate_id        uuid,
+  p_decided_by          text,
+  p_place               text,
+  p_content             text,
+  p_category            text,
+  p_time                time,
+  p_end_time            time,
+  p_register_yes        boolean default true,
+  p_register_maybe      boolean default false,
+  p_decided_by_user_id  uuid    default null
 ) returns uuid
 language plpgsql
 as $$
@@ -352,13 +355,14 @@ begin
     raise exception '候補が見つかりません' using errcode = 'P0002';
   end if;
 
-  insert into public.events (branch, date, time, end_time, place, content, poster_name, category)
-  values (v_branch, v_date, p_time, p_end_time, p_place, p_content, p_decided_by, nullif(btrim(coalesce(p_category, '')), ''))
+  insert into public.events (branch, date, time, end_time, place, content, poster_name, poster_user_id, category)
+  values (v_branch, v_date, p_time, p_end_time, p_place, p_content, p_decided_by, p_decided_by_user_id,
+          nullif(btrim(coalesce(p_category, '')), ''))
   returning id into v_event_id;
 
   if p_register_yes then
-    insert into public.participants (event_id, participant_name, registered_by, status)
-    select v_event_id, r.participant_name, p_decided_by, 'going'
+    insert into public.participants (event_id, participant_name, participant_user_id, registered_by, registered_by_user_id, status)
+    select v_event_id, r.participant_name, r.participant_user_id, p_decided_by, p_decided_by_user_id, 'going'
     from public.coordination_responses r
     join public.coordination_answers a on a.response_id = r.id
     where r.coordination_id = p_coordination_id
@@ -368,8 +372,8 @@ begin
   end if;
 
   if p_register_maybe then
-    insert into public.participants (event_id, participant_name, registered_by, status)
-    select v_event_id, r.participant_name, p_decided_by, 'going'
+    insert into public.participants (event_id, participant_name, participant_user_id, registered_by, registered_by_user_id, status)
+    select v_event_id, r.participant_name, r.participant_user_id, p_decided_by, p_decided_by_user_id, 'going'
     from public.coordination_responses r
     join public.coordination_answers a on a.response_id = r.id
     where r.coordination_id = p_coordination_id
@@ -662,7 +666,7 @@ comment on table public.app_users is 'アプリの利用者（auth.users と1対
 comment on column public.app_users.display_name is '表示名（登録時に本人が入力。別支部の同名の人がいるため一意にしない）';
 comment on column public.app_users.branch is '所属支部（登録時に本人が入力）';
 comment on column public.app_users.status is '状態: pending=承認待ち / active=有効 / disabled=無効（退会者は削除せずdisabledにする）';
-comment on column public.app_users.is_admin is 'true=グランドマスター（全支部で全権限）';
+comment on column public.app_users.is_admin is 'true=システム管理者（全支部で全権限）';
 comment on column public.app_users.admin_scope is 'region=県連管理者（自分の県連内で全権限） / branch=支部管理者（自分の支部のユーザーの承認・無効化のみ） / null=一般';
 comment on column public.app_users.approved_at is '承認日時（承認待ちの間はnull）';
 comment on column public.app_users.approved_by is '承認した管理者（app_users.id）';

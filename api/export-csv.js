@@ -1,7 +1,8 @@
 const { getSupabaseClient } = require('./_lib/supabase');
-const { resolveRequestRole } = require('./_lib/auth');
+const { resolveActor } = require('./_lib/auth');
+const { isGlobalManager, regionResolverFor } = require('./_lib/permissions');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
-const { SHARED_OWNER_BRANCHES } = require('./_lib/branches');
+const { BRANCHES, SHARED_OWNER_BRANCHES } = require('./_lib/branches');
 
 const TYPES = ['events', 'equipment', 'participants', 'history'];
 const BOM = String.fromCharCode(0xFEFF);
@@ -51,7 +52,7 @@ function buildContentDisposition(filename) {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
-async function fetchEvents(supabase, { from, to, branch }) {
+async function fetchEvents(supabase, { from, to, branch, branchesIn }) {
   let query = supabase
     .from('events')
     .select('branch,date,time,end_time,place,content,poster_name,category,finished_at,created_at')
@@ -59,7 +60,8 @@ async function fetchEvents(supabase, { from, to, branch }) {
     .order('time', { ascending: true });
   if (from) query = query.gte('date', from);
   if (to) query = query.lte('date', to);
-  if (branch) query = query.eq('branch', branch);
+  if (branchesIn) query = query.in('branch', branchesIn);
+  else if (branch) query = query.eq('branch', branch);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -80,12 +82,15 @@ async function fetchEvents(supabase, { from, to, branch }) {
   return { headers, rows, label: '予定' };
 }
 
-async function fetchEquipment(supabase, { branch }) {
+async function fetchEquipment(supabase, { branch, branchesIn }) {
   let query = supabase
     .from('equipment')
     .select('item_name,management_number,location,memo,owner_branch,owner_person,is_shared,quantity,is_countable,updated_by,updated_at')
     .order('item_name', { ascending: true });
-  if (branch) {
+  if (branchesIn) {
+    // 県連管理者: 所有支部が自分の県連内の備品だけ（空欄・「その他」、もう一方の県連の備品は含めない）
+    query = query.in('owner_branch', branchesIn);
+  } else if (branch) {
     // 指定支部 or 全体共有(西県連/東県連)は必ず含める
     const sharedList = SHARED_OWNER_BRANCHES.join(',');
     query = query.or(`owner_branch.eq.${branch},owner_branch.in.(${sharedList})`);
@@ -113,14 +118,15 @@ async function fetchEquipment(supabase, { branch }) {
 
 const PARTICIPANT_STATUS_LABELS = { going: '参加', not_going: '不参加' };
 
-async function fetchParticipants(supabase, { from, to, branch }) {
+async function fetchParticipants(supabase, { from, to, branch, branchesIn }) {
   let query = supabase
     .from('participants')
     .select('participant_name,status,comment,registered_by,created_at,events!inner(branch,date,time,place,content)')
     .order('created_at', { ascending: true });
   if (from) query = query.gte('events.date', from);
   if (to) query = query.lte('events.date', to);
-  if (branch) query = query.eq('events.branch', branch);
+  if (branchesIn) query = query.in('events.branch', branchesIn);
+  else if (branch) query = query.eq('events.branch', branch);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -141,14 +147,15 @@ async function fetchParticipants(supabase, { from, to, branch }) {
   return { headers, rows, label: '参加者リスト' };
 }
 
-async function fetchHistory(supabase, { from, to, branch }) {
+async function fetchHistory(supabase, { from, to, branch, branchesIn }) {
   let query = supabase
     .from('equipment_history')
     .select('location,moved_by,moved_at,equipment!inner(item_name,owner_branch)')
     .order('moved_at', { ascending: true });
   if (from) query = query.gte('moved_at', `${from}T00:00:00+09:00`);
   if (to) query = query.lte('moved_at', `${to}T23:59:59.999+09:00`);
-  if (branch) query = query.eq('equipment.owner_branch', branch);
+  if (branchesIn) query = query.in('equipment.owner_branch', branchesIn);
+  else if (branch) query = query.eq('equipment.owner_branch', branch);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -165,22 +172,50 @@ async function fetchHistory(supabase, { from, to, branch }) {
 }
 
 // POST /api/export-csv { type: events|equipment|participants|history, from, to, branch, password }
-// マスター管理者のみ。読み取り専用（SELECTのみ）でCSVを生成して返す。
+// 読み取り専用（SELECTのみ）でCSVを生成して返す。
+//   ・共通パスワードの管理者・システム管理者: 全支部（branch を省略すると全支部）
+//   ・県連管理者: 自分の県連の支部の分だけ。branch を省略すると自分の県連の全支部、県連の外の支部を指定したら403。
+//     備品・在庫チェック履歴は、所有支部が自分の県連内のものだけ（branch 指定時はその支部と自分の県連の県連所有分）
+//   ・それ以外（支部管理者・一般）: 不可
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return methodNotAllowed(res, ['POST']);
   }
 
   const { type, from, to, branch, password } = req.body || {};
-  const role = await resolveRequestRole(req, password);
-  if (!role) {
-    return sendJson(res, 401, { error: 'パスワードが違います' });
+  const auth = await resolveActor(req, password);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
   }
-  if (role !== 'admin') {
-    return sendJson(res, 403, { error: 'CSV出力はマスター管理者のみ可能です' });
-  }
+  const { actor } = auth;
   if (!TYPES.includes(type)) {
     return sendJson(res, 400, { error: 'typeが不正です' });
+  }
+
+  // 県連管理者は、自分の県連の支部に絞る（branchesIn）
+  let branchesIn = null;
+  if (!isGlobalManager(actor)) {
+    if (!(actor.via === 'google' && actor.kind === 'region')) {
+      return sendJson(res, 403, {
+        error: actor.via === 'google'
+          ? 'CSV出力は、システム管理者と県連管理者だけが使えます'
+          : 'CSV出力はマスター管理者のみ可能です',
+      });
+    }
+    const regionOf = await regionResolverFor(actor);
+    const myRegion = regionOf(actor.user.branch);
+    const regionBranches = BRANCHES.filter((b) => myRegion && regionOf(b) === myRegion);
+    if (branch && !regionBranches.includes(branch)) {
+      return sendJson(res, 403, { error: 'CSV出力は、自分の県連の支部だけ選べます' });
+    }
+    if (!branch) {
+      branchesIn = regionBranches;
+    } else if (type === 'equipment') {
+      // 指定支部＋自分の県連の県連所有分（全体共有）。もう一方の県連の県連所有分は含めない
+      branchesIn = [branch, ...regionBranches.filter((b) => SHARED_OWNER_BRANCHES.includes(b))];
+    } else {
+      branchesIn = [branch];
+    }
   }
 
   const supabase = getSupabaseClient();
@@ -188,13 +223,13 @@ module.exports = async (req, res) => {
   let result;
   try {
     if (type === 'events') {
-      result = await fetchEvents(supabase, { from, to, branch });
+      result = await fetchEvents(supabase, { from, to, branch, branchesIn });
     } else if (type === 'equipment') {
-      result = await fetchEquipment(supabase, { branch });
+      result = await fetchEquipment(supabase, { branch, branchesIn });
     } else if (type === 'participants') {
-      result = await fetchParticipants(supabase, { from, to, branch });
+      result = await fetchParticipants(supabase, { from, to, branch, branchesIn });
     } else {
-      result = await fetchHistory(supabase, { from, to, branch });
+      result = await fetchHistory(supabase, { from, to, branch, branchesIn });
     }
   } catch (err) {
     return sendJson(res, 500, { error: err.message });

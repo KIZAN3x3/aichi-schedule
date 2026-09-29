@@ -9,6 +9,9 @@ import {
   lockHeaderName,
   roleLabelOf,
   legacyRoleOf,
+  adminKindOf,
+  isDataManager,
+  regionBranchesOf,
 } from './auth.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
@@ -178,10 +181,17 @@ function enterApp() {
   els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
 
-  if (state.role !== 'admin') {
+  // 候補管理: 共通パスワードの管理者・システム管理者（全支部）と、県連管理者（自分の県連内の支部だけ）
+  if (!isDataManager(state)) {
     els.adminOnlyNotice.classList.remove('hidden');
     els.branchOptionsPanel.classList.add('hidden');
     return;
+  }
+  if (adminKindOf(state.googleUser) === 'region') {
+    const allowed = regionBranchesOf(state.googleUser);
+    for (const option of [...els.branchOptionsSelect.options]) {
+      if (option.value && !allowed.includes(option.value)) option.remove();
+    }
   }
   els.adminOnlyNotice.classList.add('hidden');
   els.branchOptionsPanel.classList.remove('hidden');

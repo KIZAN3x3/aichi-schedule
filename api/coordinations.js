@@ -1,5 +1,6 @@
 const { getSupabaseClient } = require('./_lib/supabase');
-const { resolveRequestRole } = require('./_lib/auth');
+const { resolveActor } = require('./_lib/auth');
+const { regionResolverFor, canActOnRow, writerName, writerId, forbiddenMessage } = require('./_lib/permissions');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 
@@ -67,6 +68,17 @@ function updateErrorResponse(error) {
   }
   console.error('update_coordination failed:', error);
   return { status: 500, message: '日程調整の保存に失敗しました。時間をおいて再度お試しください' };
+}
+
+// 日程調整に対して、作成者本人（またはその支部を管理できる管理者）として操作できるか
+async function canActOnCoordination(actor, existing, requestName) {
+  const regionOf = await regionResolverFor(actor);
+  return canActOnRow(
+    actor,
+    { branch: existing.branch, userIds: [existing.created_by_user_id], names: [existing.created_by] },
+    regionOf,
+    requestName
+  );
 }
 
 module.exports = async (req, res) => {
@@ -165,15 +177,18 @@ function validateCandidates(candidates, { allowId }) {
 //   コンペンセーティングアクション＝失敗時の後始末で対応している）
 async function handleCreate(req, res) {
   const { branch, title, place, content, created_by, reply_deadline, candidates, password } = req.body || {};
-  const role = await resolveRequestRole(req, password);
-  if (!role) {
-    return sendJson(res, 401, { error: 'パスワードが違います' });
+  const auth = await resolveActor(req, password);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
   }
+  const { actor } = auth;
   if (!BRANCHES.includes(branch)) {
     return sendJson(res, 400, { error: '支部が不正です' });
   }
 
-  const trimmedCreatedBy = typeof created_by === 'string' ? created_by.trim() : '';
+  // 作成者名: Googleの人は表示名（送られた値は使わない）。共通パスワードの人は今までどおり送られた値
+  const createdByInput = writerName(actor, created_by);
+  const trimmedCreatedBy = typeof createdByInput === 'string' ? createdByInput.trim() : '';
   const fields = validateCoordinationFields({ title, place, content, reply_deadline });
   if (fields.error || !trimmedCreatedBy) {
     return sendJson(res, 400, { error: fields.error || '必須項目が不足しています' });
@@ -196,6 +211,7 @@ async function handleCreate(req, res) {
       place: trimmedPlace,
       content: trimmedContent,
       created_by: trimmedCreatedBy,
+      created_by_user_id: writerId(actor),
       reply_deadline: trimmedDeadline || null,
     })
     .select()
@@ -235,18 +251,20 @@ async function handleCreate(req, res) {
 
 // PUT /api/coordinations?id=xxx : 日程調整の編集（作成者本人 or 管理者のみ。調整中のときだけ）
 //   body: { title, place, content, reply_deadline?, candidates: [{id?, date, time?, note?}], created_by, password }
-//   created_by は操作する人の名前（作成者本人かどうかの判定に使う。作成者名そのものは変更しない）。
+//   created_by は操作する人の名前（共通パスワードの人が、ユーザーIDが空欄の調整を名前の一致で操作するときに使う。
+//   作成者名そのものは変更しない）。Googleの人は不要（作成者のユーザーIDで判定する）。
 //   候補は、既存の候補ならidを付けて渡す（idの無いものは新規追加、渡されなかった既存の候補は削除）。
 //   調整本体と候補の更新は、DB関数 update_coordination が1トランザクションで行う
 //   （行ロックにより決定処理と同時には走らない。決定済みならP0001で止まる）
 async function handleUpdate(req, res, id) {
   const { title, place, content, reply_deadline, candidates, created_by, password } = req.body || {};
-  const role = await resolveRequestRole(req, password);
-  if (!role) {
-    return sendJson(res, 401, { error: 'パスワードが違います' });
+  const auth = await resolveActor(req, password);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
   }
+  const { actor } = auth;
   const operator = typeof created_by === 'string' ? created_by.trim() : '';
-  if (!operator) {
+  if (actor.via === 'password' && !operator) {
     return sendJson(res, 400, { error: 'created_byが必要です' });
   }
   if (!UUID_PATTERN.test(id)) {
@@ -257,14 +275,20 @@ async function handleUpdate(req, res, id) {
 
   const { data: existing, error: fetchError } = await supabase
     .from('coordinations')
-    .select('created_by, status')
+    .select('branch, created_by, created_by_user_id, status')
     .eq('id', id)
     .maybeSingle();
   if (fetchError || !existing) {
     return sendJson(res, 404, { error: '日程調整が見つかりません' });
   }
-  if (role !== 'admin' && existing.created_by !== operator) {
-    return sendJson(res, 403, { error: '作成者本人のみ編集できます' });
+  if (!(await canActOnCoordination(actor, existing, operator))) {
+    return sendJson(res, 403, {
+      error: forbiddenMessage(
+        actor,
+        '作成者本人のみ編集できます',
+        'この日程調整を編集できるのは、作成した本人か、この支部を管理する管理者だけです'
+      ),
+    });
   }
   // 画面で分かりやすい文言を返すための事前チェック。
   // 最終的な判定は、DB関数が行ロックを取ってから行う（この間に決定された場合もP0001で止まる）
@@ -296,16 +320,18 @@ async function handleUpdate(req, res, id) {
   return sendJson(res, 200, { id });
 }
 
-// DELETE /api/coordinations?id=xxx : 日程調整の削除（作成者本人 or 管理者のみ）
+// DELETE /api/coordinations?id=xxx : 日程調整の削除（作成者本人 or その支部を管理できる管理者のみ）
+//   body: { created_by, password }。created_by は共通パスワードの人の名前（Googleの人は不要）
 //   決定済みも削除できる。eventsはcoordinationsを参照していない（参照の向きは
 //   coordinations.decided_event_id → events.id の一方向）ため、決定で作られた予定と参加者は残る
 async function handleDelete(req, res, id) {
   const { created_by, password } = req.body || {};
-  const role = await resolveRequestRole(req, password);
-  if (!role) {
-    return sendJson(res, 401, { error: 'パスワードが違います' });
+  const auth = await resolveActor(req, password);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
   }
-  if (!created_by) {
+  const { actor } = auth;
+  if (actor.via === 'password' && !created_by) {
     return sendJson(res, 400, { error: 'created_byが必要です' });
   }
 
@@ -313,14 +339,20 @@ async function handleDelete(req, res, id) {
 
   const { data: existing, error: fetchError } = await supabase
     .from('coordinations')
-    .select('created_by')
+    .select('branch, created_by, created_by_user_id')
     .eq('id', id)
     .single();
   if (fetchError || !existing) {
     return sendJson(res, 404, { error: '日程調整が見つかりません' });
   }
-  if (role !== 'admin' && existing.created_by !== created_by) {
-    return sendJson(res, 403, { error: '作成者本人のみ削除できます' });
+  if (!(await canActOnCoordination(actor, existing, created_by))) {
+    return sendJson(res, 403, {
+      error: forbiddenMessage(
+        actor,
+        '作成者本人のみ削除できます',
+        'この日程調整を削除できるのは、作成した本人か、この支部を管理する管理者だけです'
+      ),
+    });
   }
 
   const { error } = await supabase.from('coordinations').delete().eq('id', id);
@@ -331,7 +363,9 @@ async function handleDelete(req, res, id) {
   return sendJson(res, 204, null);
 }
 
-// POST /api/coordinations?id=xxx&action=decide : 候補を決定してeventsへ登録（作成者本人 or 管理者のみ）
+// POST /api/coordinations?id=xxx&action=decide : 候補を決定してeventsへ登録（作成者本人 or その支部を管理できる管理者のみ）
+//   decided_by: 共通パスワードの人の名前（作る予定の投稿者名になり、本人判定にも使う）。
+//   Googleの人は表示名を使い（送られた値は使わない）、ユーザーIDも DB関数に渡す（p_decided_by_user_id。migration 0019）
 //   body: { decided_by, candidate_id, place, content, category?, time, end_time?,
 //           register_yes?, register_maybe?, password }
 //   権限チェックのみここで行い、実際の書き込みはDB関数 decide_coordination に任せる
@@ -350,12 +384,14 @@ async function handleDecide(req, res, id) {
     password,
   } = req.body || {};
 
-  const role = await resolveRequestRole(req, password);
-  if (!role) {
-    return sendJson(res, 401, { error: 'パスワードが違います' });
+  const auth = await resolveActor(req, password);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
   }
+  const { actor } = auth;
 
-  const trimmedDecidedBy = typeof decided_by === 'string' ? decided_by.trim() : '';
+  const decidedByInput = writerName(actor, decided_by);
+  const trimmedDecidedBy = typeof decidedByInput === 'string' ? decidedByInput.trim() : '';
   if (!trimmedDecidedBy) {
     return sendJson(res, 400, { error: '決定操作をした人の名前を入力してください' });
   }
@@ -385,14 +421,20 @@ async function handleDecide(req, res, id) {
 
   const { data: existing, error: fetchError } = await supabase
     .from('coordinations')
-    .select('created_by')
+    .select('branch, created_by, created_by_user_id')
     .eq('id', id)
     .single();
   if (fetchError || !existing) {
     return sendJson(res, 404, { error: '日程調整が見つかりません' });
   }
-  if (role !== 'admin' && existing.created_by !== trimmedDecidedBy) {
-    return sendJson(res, 403, { error: '作成者本人または管理者のみ決定できます' });
+  if (!(await canActOnCoordination(actor, existing, trimmedDecidedBy))) {
+    return sendJson(res, 403, {
+      error: forbiddenMessage(
+        actor,
+        '作成者本人または管理者のみ決定できます',
+        'この日程調整を決定できるのは、作成した本人か、この支部を管理する管理者だけです'
+      ),
+    });
   }
 
   const { data: eventId, error } = await supabase.rpc('decide_coordination', {
@@ -406,6 +448,7 @@ async function handleDecide(req, res, id) {
     p_end_time: trimmedEndTime || null,
     p_register_yes: register_yes !== false,
     p_register_maybe: register_maybe === true,
+    p_decided_by_user_id: writerId(actor),
   });
 
   if (error) {

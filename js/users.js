@@ -1,18 +1,11 @@
 // ユーザー管理画面（Googleでログインした管理者だけが使える）。
 // 表示される・操作できるのは、自分の権限範囲のユーザーだけ（範囲の判定は api/users.js 側で行う）。
 // 画面の支部の絞り込み・支部管理者の表示・承認待ちの人数は、api/users.js の list が返す内容だけで作っている
-import { BRANCHES } from './branches.js';
+import { BRANCHES, REGION_OF_BRANCH } from './branches.js';
 import { loadGoogleAccount, showAccountGate, googleLogout, usersApi, adminKindOf, roleLabelOf } from './auth.js';
 
 const ALL = 'all';
 const SELECTED_BRANCH_KEY = 'aichi-schedule:usersBranch';
-
-// 支部と県連の対応（supabase の branch_regions と一致させること。県連管理者の選択肢を作るのに使う）
-const REGION_OF_BRANCH = {
-  西県連: '西', '1支部': '西', '2支部': '西', '3支部': '西', '4支部': '西', '5支部': '西',
-  '6支部': '西', '7支部': '西', '8支部': '西', '9支部': '西', '10支部': '西', '16支部': '西',
-  東県連: '東', '11支部': '東', '12支部': '東', '13支部': '東', '14支部': '東', '15支部': '東',
-};
 
 const STATUS_GROUPS = [
   { status: 'pending', title: '承認待ち' },
@@ -25,7 +18,7 @@ const SCOPE_OPTIONS = [
   { value: 'region', label: '県連管理者' },
 ];
 const SCOPE_TEXT = {
-  grand: 'グランドマスターとして、全支部のユーザーを管理できます。',
+  grand: 'システム管理者として、全支部のユーザーを管理できます。',
   region: '県連管理者として、自分の県連内の支部のユーザーを管理できます。',
   branch: '支部管理者として、自分の支部の一般ユーザーの承認・無効化ができます。',
 };
@@ -134,7 +127,7 @@ function showNotice(text) {
 // ===================== 支部の選択 =====================
 
 // 自分の権限で選べる支部（ALL を含む）
-//   グランドマスター: すべて＋18支部 / 県連管理者: すべて（自分の県連内）＋自分の県連の支部 / 支部管理者: 自分の支部だけ
+//   システム管理者: すべて＋18支部 / 県連管理者: すべて（自分の県連内）＋自分の県連の支部 / 支部管理者: 自分の支部だけ
 function branchChoices() {
   if (state.kind === 'grand') return [ALL, ...BRANCHES];
   if (state.kind === 'region') {
@@ -290,7 +283,7 @@ function createUserCard(user, showBranch) {
   name.className = 'user-card-name';
   name.textContent = user.display_name;
   head.appendChild(name);
-  const kindLabel = user.is_admin ? 'グランドマスター' : user.admin_scope === 'region' ? '県連管理者' : user.admin_scope === 'branch' ? '支部管理者' : '';
+  const kindLabel = user.is_admin ? 'システム管理者' : user.admin_scope === 'region' ? '県連管理者' : user.admin_scope === 'branch' ? '支部管理者' : '';
   if (kindLabel) {
     const badge = document.createElement('span');
     badge.className = 'user-card-badge';
@@ -338,7 +331,7 @@ function createUserCard(user, showBranch) {
   }
   card.appendChild(actions);
 
-  // 管理者の種類の変更（グランドマスター・県連管理者だけ。有効なユーザーのみ）
+  // 管理者の種類の変更（システム管理者・県連管理者だけ。有効なユーザーのみ）
   if (user.status === 'active' && user.can_set_scope && !user.is_admin) {
     card.appendChild(createScopeEditor(user));
   }

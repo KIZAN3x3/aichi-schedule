@@ -1,5 +1,6 @@
 const { getSupabaseClient } = require('./_lib/supabase');
-const { resolveRequestRole } = require('./_lib/auth');
+const { resolveActor } = require('./_lib/auth');
+const { writerName, writerId } = require('./_lib/permissions');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 const { FIXED_CATEGORIES } = require('./_lib/categories');
@@ -11,11 +12,14 @@ module.exports = async (req, res) => {
     return methodNotAllowed(res, ['POST']);
   }
 
-  const { branch, date, time, end_time, place, content, poster_name, category, password } = req.body || {};
-  const role = await resolveRequestRole(req, password);
-  if (!role) {
-    return sendJson(res, 401, { error: 'パスワードが違います' });
+  const { branch, date, time, end_time, place, content, category, password } = req.body || {};
+  const auth = await resolveActor(req, password);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
   }
+  const { actor } = auth;
+  // 投稿者名: Googleの人は表示名（送られた値は使わない）。共通パスワードの人は今までどおり送られた値
+  const poster_name = writerName(actor, (req.body || {}).poster_name);
   if (!BRANCHES.includes(branch)) {
     return sendJson(res, 400, { error: '支部が不正です' });
   }
@@ -42,6 +46,7 @@ module.exports = async (req, res) => {
       place,
       content,
       poster_name,
+      poster_user_id: writerId(actor),
       category: trimmedCategory || null,
     })
     .select()

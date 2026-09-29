@@ -1,10 +1,24 @@
 const { getSupabaseClient } = require('./_lib/supabase');
-const { resolveRequestRole } = require('./_lib/auth');
+const { resolveActor } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
+const { regionResolverFor, canActOnRow, forbiddenMessage } = require('./_lib/permissions');
 
 const MARKS = ['yes', 'maybe', 'no'];
 const COMMENT_MAX_LENGTH = 200;
 const REGISTERED_BY_MAX_LENGTH = 50;
+const SAME_NAME_MESSAGE = '同じ名前の人がすでに回答しています';
+// Googleの人が、以前に共通パスワードで同じ名前で登録された回答（ユーザーIDが空欄の行）と重なったとき
+const LEGACY_SAME_NAME_MESSAGE =
+  'この日程調整には、同じ名前で共通パスワードから登録された回答がすでにあります。変更・取消は、この支部を管理する管理者に依頼してください';
+
+// 回答の行の本人（ユーザーID・名前）。本人登録なら回答者本人、代理登録なら登録した人も本人として扱う
+function responseRowOwner(row, branch) {
+  return {
+    branch,
+    userIds: [row.participant_user_id, row.registered_by_user_id],
+    names: [row.participant_name, row.registered_by],
+  };
+}
 
 // 生のDBエラーをクライアントに返さないための日本語メッセージ変換
 function responseErrorResponse(error) {
@@ -24,31 +38,39 @@ function responseErrorResponse(error) {
 // POST /api/coordination-responses   : 日程調整への回答（登録・更新）
 //   body: { coordination_id, participant_name, registered_by?, comment?, answers: [{candidate_id, mark}], password }
 //   同じ coordination_id + participant_name が既にあれば新規作成せず更新する。
-//   更新できるのは 本人(registered_by === participant_name) または 最初の登録者(既存行のregistered_by) のみ。
-//   それ以外は409。参加者機能(api/participants.js)と同じ考え方。
-// DELETE /api/coordination-responses : 回答の取り消し（本人 または 代理登録した人のみ）
+//   更新できるのは、その行の本人（participant_user_id / registered_by_user_id。IDが空欄の行は名前の一致）か、
+//   その支部を管理できる管理者だけ。それ以外は409。参加者機能(api/participants.js)と同じ考え方。
+//   ・Googleの人: participant_name が自分の表示名なら本人登録（participant_user_id = 自分）、違えば代理登録。
+//     registered_by は表示名、registered_by_user_id は自分（送られた registered_by は使わない）
+// DELETE /api/coordination-responses : 回答の取り消し（本人・代理登録した人、またはその支部を管理できる管理者）
 //   body: { coordination_id, participant_name, requested_by, password }
+//   requested_by は共通パスワードの人の名前（必須）。Googleの人は不要
 // 登録・編集・取消はどれも、調整中(status='open')のときだけ受け付ける（決定済みは409）。
 // ※状態の確認と書き込みの間に決定された場合は、その回答が決定済みの調整に残りうる
 //   （数十〜数百ミリ秒の間だけ。データは壊れない。DBトリガーでの厳密な防止は入れていない）
 module.exports = async (req, res) => {
   const { coordination_id, participant_name, password } = req.body || {};
-  const role = await resolveRequestRole(req, password);
-  if (!role) {
-    return sendJson(res, 401, { error: 'パスワードが違います' });
+  const auth = await resolveActor(req, password);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
   }
+  const { actor } = auth;
   if (!coordination_id || !participant_name) {
     return sendJson(res, 400, { error: '必須項目が不足しています' });
   }
 
   const supabase = getSupabaseClient();
 
+  // 親の日程調整（状態の確認と、管理者の範囲の判定に使う支部）
+  let coordination = null;
+  let regionOf = null;
   if (req.method === 'POST' || req.method === 'DELETE') {
-    const { data: coordination, error: coordinationError } = await supabase
+    const { data, error: coordinationError } = await supabase
       .from('coordinations')
-      .select('status')
+      .select('status, branch')
       .eq('id', coordination_id)
       .maybeSingle();
+    coordination = data;
     if (coordinationError) {
       const { status, message } = responseErrorResponse(coordinationError);
       return sendJson(res, status, { error: message });
@@ -59,6 +81,7 @@ module.exports = async (req, res) => {
     if (coordination.status !== 'open') {
       return sendJson(res, 409, { error: 'この日程調整は決定済みのため、回答できません。' });
     }
+    regionOf = await regionResolverFor(actor);
   }
 
   if (req.method === 'POST') {
@@ -73,15 +96,25 @@ module.exports = async (req, res) => {
       return sendJson(res, 400, { error: '参加者名を入力してください' });
     }
 
-    // registered_by: 未指定は本人登録として participant_name を採用（participants.jsと同じ互換）
-    let registeredBy = name;
-    if (registered_by !== undefined && registered_by !== null) {
-      if (typeof registered_by !== 'string' || !registered_by.trim()) {
-        return sendJson(res, 400, { error: '登録者名を入力してください' });
-      }
-      registeredBy = registered_by.trim();
-      if ([...registeredBy].length > REGISTERED_BY_MAX_LENGTH) {
-        return sendJson(res, 400, { error: `登録者名は${REGISTERED_BY_MAX_LENGTH}文字以内で入力してください` });
+    // 登録した人（名前・ID）と、回答者本人のID
+    let registeredBy;
+    let registeredByUserId = null;
+    let participantUserId = null;
+    if (actor.via === 'google') {
+      registeredBy = actor.user.display_name;
+      registeredByUserId = actor.user.id;
+      participantUserId = name === actor.user.display_name ? actor.user.id : null; // 表示名と同じなら本人登録
+    } else {
+      // registered_by: 未指定は本人登録として participant_name を採用（participants.jsと同じ互換）
+      registeredBy = name;
+      if (registered_by !== undefined && registered_by !== null) {
+        if (typeof registered_by !== 'string' || !registered_by.trim()) {
+          return sendJson(res, 400, { error: '登録者名を入力してください' });
+        }
+        registeredBy = registered_by.trim();
+        if ([...registeredBy].length > REGISTERED_BY_MAX_LENGTH) {
+          return sendJson(res, 400, { error: `登録者名は${REGISTERED_BY_MAX_LENGTH}文字以内で入力してください` });
+        }
       }
     }
 
@@ -125,16 +158,8 @@ module.exports = async (req, res) => {
       normalizedAnswers.push({ candidate_id: answer.candidate_id, mark: answer.mark });
     }
 
-    const restrictToTarget = (query) => {
-      let q = query.eq('coordination_id', coordination_id).eq('participant_name', name);
-      if (registeredBy !== name) {
-        q = q.eq('registered_by', registeredBy);
-      }
-      return q;
-    };
-
-    // 最大2回: 新規作成 → 既存(23505)なら条件付き更新。更新対象0行のとき、
-    // 直前に行が削除されていた場合に備えて新規作成をやり直す
+    // 最大2回: 新規作成 → 既存(23505)なら、既存の行の本人か確認して条件付き更新。
+    // 更新対象0行のとき、直前に行が削除・変更されていた場合に備えてやり直す
     let response;
     for (let attempt = 0; attempt < 2 && !response; attempt += 1) {
       const insertResult = await supabase
@@ -142,7 +167,9 @@ module.exports = async (req, res) => {
         .insert({
           coordination_id,
           participant_name: name,
+          participant_user_id: participantUserId,
           registered_by: registeredBy,
+          registered_by_user_id: registeredByUserId,
           comment: trimmedComment,
         })
         .select()
@@ -156,10 +183,35 @@ module.exports = async (req, res) => {
         return sendJson(res, status, { error: message });
       }
 
-      const table = supabase.from('coordination_responses');
-      const updateResult = await restrictToTarget(
-        table.update({ comment: trimmedComment })
-      ).select();
+      const { data: existing, error: existingError } = await supabase
+        .from('coordination_responses')
+        .select('*')
+        .eq('coordination_id', coordination_id)
+        .eq('participant_name', name)
+        .maybeSingle();
+      if (existingError) {
+        const { status, message } = responseErrorResponse(existingError);
+        return sendJson(res, status, { error: message });
+      }
+      if (!existing) continue; // 直前に削除された → 新規作成をやり直す
+
+      // 共通パスワードの人は、登録した人の名前（本人登録なら回答者名）で本人判定する（今までと同じ考え方）
+      if (!canActOnRow(actor, responseRowOwner(existing, coordination.branch), regionOf, registeredBy)) {
+        const legacyRow = !existing.participant_user_id && !existing.registered_by_user_id;
+        return sendJson(res, 409, {
+          error: actor.via === 'google' && legacyRow ? LEGACY_SAME_NAME_MESSAGE : SAME_NAME_MESSAGE,
+        });
+      }
+
+      // 判定に使った本人のIDが、判定のあとに変わっていないことを条件に更新する
+      let query = supabase.from('coordination_responses').update({ comment: trimmedComment }).eq('id', existing.id);
+      query = existing.participant_user_id
+        ? query.eq('participant_user_id', existing.participant_user_id)
+        : query.is('participant_user_id', null);
+      query = existing.registered_by_user_id
+        ? query.eq('registered_by_user_id', existing.registered_by_user_id)
+        : query.is('registered_by_user_id', null);
+      const updateResult = await query.select();
       if (updateResult.error) {
         const { status, message } = responseErrorResponse(updateResult.error);
         return sendJson(res, status, { error: message });
@@ -169,7 +221,7 @@ module.exports = async (req, res) => {
       }
     }
     if (!response) {
-      return sendJson(res, 409, { error: 'その名前は既に回答済みです' });
+      return sendJson(res, 409, { error: SAME_NAME_MESSAGE });
     }
 
     // 回答（〇△✕）は upsert で保存する。先に全削除してから作り直す方式だと、
@@ -209,13 +261,13 @@ module.exports = async (req, res) => {
   if (req.method === 'DELETE') {
     const { requested_by } = req.body;
     const trimmedRequestedBy = typeof requested_by === 'string' ? requested_by.trim() : '';
-    if (!trimmedRequestedBy) {
+    if (actor.via === 'password' && !trimmedRequestedBy) {
       return sendJson(res, 400, { error: '操作している人の名前を入力してください' });
     }
 
     const { data: existing, error: fetchError } = await supabase
       .from('coordination_responses')
-      .select('participant_name, registered_by')
+      .select('*')
       .eq('coordination_id', coordination_id)
       .eq('participant_name', participant_name)
       .maybeSingle();
@@ -226,15 +278,17 @@ module.exports = async (req, res) => {
     if (!existing) {
       return sendJson(res, 404, { error: '回答が見つかりません' });
     }
-    if (existing.participant_name !== trimmedRequestedBy && existing.registered_by !== trimmedRequestedBy) {
-      return sendJson(res, 403, { error: '本人または代理登録した人のみ取り消せます' });
+    if (!canActOnRow(actor, responseRowOwner(existing, coordination.branch), regionOf, trimmedRequestedBy)) {
+      return sendJson(res, 403, {
+        error: forbiddenMessage(
+          actor,
+          '本人または代理登録した人のみ取り消せます',
+          'この回答を取り消せるのは、本人・登録した人か、この支部を管理する管理者だけです'
+        ),
+      });
     }
 
-    const { error } = await supabase
-      .from('coordination_responses')
-      .delete()
-      .eq('coordination_id', coordination_id)
-      .eq('participant_name', participant_name);
+    const { error } = await supabase.from('coordination_responses').delete().eq('id', existing.id);
     if (error) {
       const { status, message } = responseErrorResponse(error);
       return sendJson(res, status, { error: message });

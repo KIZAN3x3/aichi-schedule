@@ -184,7 +184,7 @@ async function handleList(req, res, { appUser }) {
 //   ・disable  : pending / active → disabled
 //   ・enable   : disabled → active。approved_at / approved_by は上書きしない
 //               （一度も承認されずに無効化された人だけは、ここで初めて記録する）
-//   ・set_scope: active の相手の admin_scope を null / 'branch' / 'region' にする（グランドマスター・県連管理者のみ）
+//   ・set_scope: active の相手の admin_scope を null / 'branch' / 'region' にする（システム管理者・県連管理者のみ）
 //   状態を条件にした更新にしているため、ほかの管理者と同時に操作しても二重に処理されない（0行なら409）
 async function handleUpdate(req, res, { appUser }) {
   const kind = adminKind(appUser);

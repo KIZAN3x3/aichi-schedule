@@ -31,7 +31,7 @@ async function getAuthUser(req) {
 }
 
 // 管理者の種類。status が active でなければ、どの権限も持たない
-//   'grand' = グランドマスター / 'region' = 県連管理者 / 'branch' = 支部管理者 / null = 一般
+//   'grand' = システム管理者 / 'region' = 県連管理者 / 'branch' = 支部管理者 / null = 一般
 function adminKind(user) {
   if (!user || user.status !== 'active') return null;
   if (user.is_admin) return 'grand';
@@ -51,8 +51,8 @@ async function loadRegionOf() {
 
 // actor が target を見られる・操作できるか（承認・無効化・再有効化の範囲）
 //   ・自分自身は誰も操作できない
-//   ・グランドマスター: 全員（ほかのグランドマスターを含む）
-//   ・県連管理者: 相手の支部の県連が自分と同じ人。グランドマスターは除く
+//   ・システム管理者: 全員（ほかのシステム管理者を含む）
+//   ・県連管理者: 相手の支部の県連が自分と同じ人。システム管理者は除く
 //   ・支部管理者: 自分と同じ支部の一般ユーザーだけ（管理者は除く）
 function canManageTarget(actor, target, regionOf) {
   if (!actor || !target || actor.id === target.id) return false;
@@ -68,7 +68,7 @@ function canManageTarget(actor, target, regionOf) {
   return false;
 }
 
-// 管理者の種類（admin_scope）を変えられるか。グランドマスターと県連管理者だけ、かつ操作できる相手のみ。
+// 管理者の種類（admin_scope）を変えられるか。システム管理者と県連管理者だけ、かつ操作できる相手のみ。
 // is_admin はAPIでは一切変更しない（SQL Editorでのみ変更する）
 function canSetScope(actor, target, regionOf) {
   const kind = adminKind(actor);

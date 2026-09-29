@@ -3,7 +3,7 @@
 //   ・Googleでログインを始めるとき: 保存済みの共通パスワードを消す
 //   ・共通パスワードでログインするとき: Googleのセッションからログアウトする（signOutLocal）
 import { getSupabaseClient } from './supabase-client.js';
-import { BRANCHES } from './branches.js';
+import { BRANCHES, REGION_OF_BRANCH } from './branches.js';
 
 // Googleから戻ってきた直後に1回だけ「最終ログイン日時」を記録するための目印（ページをまたいで残るようsessionStorage）
 const GOOGLE_LOGIN_PENDING_KEY = 'aichi-schedule:googleLoginPending';
@@ -11,7 +11,7 @@ const PASSWORD_KEYS = ['aichi-schedule:password', 'aichi-schedule:role'];
 // Googleから戻ってきたときにURLに付く値（PKCEのcodeと、失敗時のerror）。処理後にURLから消す
 const OAUTH_URL_PARAMS = ['code', 'error', 'error_code', 'error_description'];
 
-const KIND_LABELS = { grand: 'グランドマスター', region: '県連管理者', branch: '支部管理者' };
+const KIND_LABELS = { grand: 'システム管理者', region: '県連管理者', branch: '支部管理者' };
 
 // 管理者の種類（api/_lib/user-auth.js の adminKind と同じ判定）
 export function adminKindOf(user) {
@@ -30,6 +30,47 @@ export function roleLabelOf(user) {
 // 既存APIでの権限（api/_lib/auth.js の resolveRequestRole と同じ当てはめ）
 export function legacyRoleOf(user) {
   return user && user.is_admin ? 'admin' : 'user';
+}
+
+// ===================== 画面での権限判定（api/_lib/permissions.js と同じ考え方） =====================
+// ボタンの表示・選択肢の絞り込みに使う。本当の判定は API 側で行う。
+// session: 各画面の state（role / googleUser / myName を持つ）
+
+// Googleの県連管理者の、自分の県連の支部
+export function regionBranchesOf(user) {
+  const region = user ? REGION_OF_BRANCH[user.branch] : null;
+  return region ? BRANCHES.filter((b) => REGION_OF_BRANCH[b] === region) : [];
+}
+
+// その支部のデータを管理できる管理者か（システム管理者・共通パスワードの管理者は全支部、県連管理者は自分の県連内）
+export function canManageBranchData(session, branch) {
+  if (session.role === 'admin') return true;
+  const user = session.googleUser;
+  if (user && adminKindOf(user) === 'region') return regionBranchesOf(user).includes(branch);
+  return false;
+}
+
+// 県連管理者を含め、データを管理できる管理者か（候補管理・CSV出力・備品の登録ボタンを出すかどうか）
+export function isDataManager(session) {
+  return session.role === 'admin' || adminKindOf(session.googleUser) === 'region';
+}
+
+// 行に対して本人（または管理者）として操作できるか
+//   row.branch: その行の支部 / row.userIds: 本人のユーザーID / row.names: 本人の名前（IDが空欄の行だけで使う）
+//   ・IDが入っている行: Googleの本人だけ
+//   ・IDが空欄の行: 共通パスワードの一般の人は名前の一致で可、Googleの一般の人は不可
+export function canActOnRowFront(session, row) {
+  if (canManageBranchData(session, row.branch)) return true;
+  const ids = (row.userIds || []).filter(Boolean);
+  if (ids.length > 0) return Boolean(session.googleUser) && ids.includes(session.googleUser.id);
+  if (session.googleUser) return false;
+  return Boolean(session.myName) && (row.names || []).filter(Boolean).includes(session.myName);
+}
+
+// 参加・回答の行の本人か（管理者かどうかは見ない。「あなた：参加」などの表示に使う）
+export function isMyParticipation(session, row) {
+  if (session.googleUser) return row.participant_user_id === session.googleUser.id;
+  return Boolean(session.myName) && !row.participant_user_id && row.participant_name === session.myName;
 }
 
 // Googleのセッションがあれば、最新のアクセストークンで Authorization ヘッダーを作る。

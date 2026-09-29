@@ -32,6 +32,10 @@ import {
   roleLabelOf,
   legacyRoleOf,
   adminKindOf,
+  canActOnRowFront,
+  isDataManager,
+  isMyParticipation,
+  regionBranchesOf,
 } from './auth.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
@@ -264,6 +268,7 @@ function bindStaticEvents() {
     els.newEventToggleBtn.textContent = isHidden ? '＋ この日に予定を追加' : '閉じる';
     if (!isHidden) {
       els.eventPosterName.value = state.myName;
+      els.eventPosterName.readOnly = Boolean(state.googleUser);
       els.eventCategorySelect.value = '';
       els.eventCategoryOtherWrap.classList.add('hidden');
       els.eventCategoryOther.value = '';
@@ -408,9 +413,11 @@ function enterApp() {
   els.app.classList.remove('hidden');
   els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
-  els.branchOptionsBtn.classList.toggle('hidden', state.role !== 'admin');
-  els.csvExportBtn.classList.toggle('hidden', state.role !== 'admin');
-  // ユーザー管理は、Googleでログインした管理者（グランドマスター・県連管理者・支部管理者）だけ
+  // 候補管理・CSV出力: 共通パスワードの管理者・システム管理者（全支部）と、県連管理者（自分の県連内）
+  els.branchOptionsBtn.classList.toggle('hidden', !isDataManager(state));
+  els.csvExportBtn.classList.toggle('hidden', !isDataManager(state));
+  if (adminKindOf(state.googleUser) === 'region') restrictCsvExportBranchOptions();
+  // ユーザー管理は、Googleでログインした管理者（システム管理者・県連管理者・支部管理者）だけ
   els.userAdminBtn.classList.toggle('hidden', !adminKindOf(state.googleUser));
   boot();
 }
@@ -560,11 +567,11 @@ async function refreshMyEvents() {
   }
   renderLoadingState();
 
-  const { data: rows, error } = await state.supabase
-    .from('participants')
-    .select('event_id')
-    .eq('participant_name', state.myName)
-    .eq('status', 'going');
+  let participantsQuery = state.supabase.from('participants').select('event_id').eq('status', 'going');
+  participantsQuery = state.googleUser
+    ? participantsQuery.eq('participant_user_id', state.googleUser.id)
+    : participantsQuery.eq('participant_name', state.myName);
+  const { data: rows, error } = await participantsQuery;
 
   if (error) {
     console.error(error);
@@ -823,6 +830,7 @@ function createMyEventRow(event) {
       await api.leaveEvent({
         event_id: event.id,
         participant_name: state.myName,
+        requested_by: state.myName,
         password: state.password,
       });
       await refreshMyEvents();
@@ -1111,10 +1119,14 @@ function createCategoryBadge(category) {
   return badge;
 }
 
-// 自分の行 = 本人の行 または 自分が代理登録した行。管理者も特別扱いしない
-function isMyRow(p) {
-  if (!state.myName) return false; // 表示名が空のとき、registered_by が空欄の行に誤一致しないため
-  return p.participant_name === state.myName || p.registered_by === state.myName;
+// 参加の行を編集・取消できるか = 本人の行・自分が代理登録した行、またはその支部を管理できる管理者。
+// Googleの人はユーザーIDで、共通パスワードの一般の人はIDが空欄の行だけ名前で判定する（api/participants.js と同じ）
+function isMyRow(event, p) {
+  return canActOnRowFront(state, {
+    branch: event.branch,
+    userIds: [p.participant_user_id, p.registered_by_user_id],
+    names: [p.participant_name, p.registered_by],
+  });
 }
 
 function createParticipantsSection(event) {
@@ -1176,7 +1188,7 @@ function createParticipantsAccordion(event, going, notGoing) {
   text.textContent = parts.join(' ・ ');
   summary.appendChild(text);
 
-  const myRow = [...going, ...notGoing].find((p) => p.participant_name === state.myName);
+  const myRow = [...going, ...notGoing].find((p) => isMyParticipation(state, p));
   if (myRow) {
     const mine = document.createElement('span');
     mine.className = 'participants-summary-mine';
@@ -1237,7 +1249,7 @@ function createParticipantRow(event, p) {
     row.appendChild(registeredBy);
   }
 
-  if (isMyRow(p)) {
+  if (isMyRow(event, p)) {
     const actions = document.createElement('span');
     actions.className = 'participant-row-actions';
 
@@ -1260,6 +1272,7 @@ function createParticipantRow(event, p) {
         await api.leaveEvent({
           event_id: event.id,
           participant_name: p.participant_name, // 代理登録した行では自分の名前とは限らない
+          requested_by: state.myName, // 共通パスワードの人の本人判定に使う（Googleの人はユーザーIDで判定）
           password: state.password,
         });
         await refreshCurrentEvents();
@@ -1390,10 +1403,14 @@ function createActionsRow(event, card) {
   const row = document.createElement('div');
   row.className = 'event-actions';
 
-  const canEdit = state.role === 'admin' || event.poster_name === state.myName;
-  const isParticipant = event.participants.some(
-    (p) => p.participant_name === state.myName && p.status === 'going'
-  );
+  // 編集・削除: 投稿した本人か、その支部を管理できる管理者（api/events/[id].js と同じ判定）
+  const canEdit = canActOnRowFront(state, {
+    branch: event.branch,
+    userIds: [event.poster_user_id],
+    names: [event.poster_name],
+  });
+  // 終了・戻す: 上に加えて、この予定に「参加」で登録している本人
+  const isParticipant = event.participants.some((p) => p.status === 'going' && isMyParticipation(state, p));
   const canFinish = canEdit || isParticipant;
 
   if (!canEdit && !canFinish) return row;
@@ -1417,7 +1434,7 @@ function createActionsRow(event, card) {
       try {
         await api.updateEvent(event.id, {
           finished: true,
-          poster_name: event.poster_name,
+          requested_by: state.myName,
           password: state.password,
         });
         await refreshCurrentEvents();
@@ -1437,7 +1454,7 @@ function createActionsRow(event, card) {
       try {
         await api.updateEvent(event.id, {
           finished: false,
-          poster_name: event.poster_name,
+          requested_by: state.myName,
           password: state.password,
         });
         await refreshCurrentEvents();
@@ -1458,7 +1475,7 @@ function createActionsRow(event, card) {
       if (!confirm('この予定を削除しますか？')) return;
       try {
         await api.deleteEvent(event.id, {
-          poster_name: event.poster_name,
+          requested_by: state.myName,
           password: state.password,
         });
         await refreshMonthDates();
@@ -1526,7 +1543,7 @@ function enterEditMode(event, card) {
         place: placeInput.value.trim(),
         content: contentInput.value.trim(),
         category: resolveCategoryValue(categorySelect, categoryOtherInput),
-        poster_name: event.poster_name,
+        requested_by: state.myName,
         password: state.password,
       });
       await refreshCurrentEvents();
@@ -1595,6 +1612,14 @@ async function handleCreateEvent(event) {
 function renderFatalError(message) {
   els.eventList.innerHTML = '';
   els.eventList.appendChild(hintEl(message));
+}
+
+// 県連管理者のCSV出力: 支部の選択肢を自分の県連内だけにする（空欄＝自分の県連の全支部）
+function restrictCsvExportBranchOptions() {
+  const allowed = regionBranchesOf(state.googleUser);
+  els.csvExportBranch.innerHTML = '';
+  els.csvExportBranch.appendChild(new Option('自分の県連の全支部', ''));
+  for (const branch of allowed) els.csvExportBranch.appendChild(new Option(branch, branch));
 }
 
 function populateCsvExportBranchOptions() {

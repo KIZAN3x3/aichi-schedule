@@ -1,6 +1,6 @@
 const { randomUUID } = require('crypto');
 const { getSupabaseClient } = require('../_lib/supabase');
-const { resolveRequestRole } = require('../_lib/auth');
+const { resolveActor } = require('../_lib/auth');
 const { sendJson, methodNotAllowed } = require('../_lib/http');
 
 const BUCKET = 'equipment-images';
@@ -20,9 +20,9 @@ module.exports = async (req, res) => {
   }
 
   const { contentType, password } = req.body || {};
-  const role = await resolveRequestRole(req, password);
-  if (!role) {
-    return sendJson(res, 401, { error: 'パスワードが違います' });
+  const auth = await resolveActor(req, password);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
   }
   const ext = ALLOWED_CONTENT_TYPES[contentType];
   if (!ext) {

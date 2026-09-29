@@ -13,6 +13,7 @@ import {
   lockHeaderName,
   roleLabelOf,
   legacyRoleOf,
+  canActOnRowFront,
 } from './auth.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
@@ -701,14 +702,22 @@ function sortedCandidates(coordination) {
   return [...coordination.coordination_candidates].sort((a, b) => a.sort_order - b.sort_order);
 }
 
+// 編集・削除・決定できるか = 作成した本人か、その支部を管理できる管理者（api/coordinations.js と同じ判定）
 function canManage(coordination) {
-  if (!state.myName) return false;
-  return state.role === 'admin' || coordination.created_by === state.myName;
+  return canActOnRowFront(state, {
+    branch: coordination.branch,
+    userIds: [coordination.created_by_user_id],
+    names: [coordination.created_by],
+  });
 }
 
-function isMyResponseRow(response) {
-  if (!state.myName) return false;
-  return response.participant_name === state.myName || response.registered_by === state.myName;
+// 回答を編集・取消できるか = 本人・代理登録した人か、その支部を管理できる管理者（api/coordination-responses.js と同じ判定）
+function isMyResponseRow(coordination, response) {
+  return canActOnRowFront(state, {
+    branch: coordination.branch,
+    userIds: [response.participant_user_id, response.registered_by_user_id],
+    names: [response.participant_name, response.registered_by],
+  });
 }
 
 function requireMyName(action) {
@@ -1005,7 +1014,7 @@ function createResponderHeaderCell(coordination, response) {
   const th = document.createElement('th');
   th.className = 'coordination-col-responder';
 
-  const canEditThisRow = isMyResponseRow(response) && coordination.status === 'open';
+  const canEditThisRow = isMyResponseRow(coordination, response) && coordination.status === 'open';
   if (canEditThisRow) {
     const nameBtn = document.createElement('button');
     nameBtn.type = 'button';
@@ -1181,6 +1190,7 @@ function resetCoordinationForm() {
   els.coordinationCandidatesList.appendChild(createCandidateRow());
   els.coordinationCandidatesList.appendChild(createCandidateRow());
   els.coordinationCreatedBy.value = state.myName;
+  els.coordinationCreatedBy.readOnly = Boolean(state.googleUser);
   els.coordinationFormError.textContent = '';
 }
 
@@ -1550,6 +1560,7 @@ function openDecideDialog(coordination, candidate) {
   els.decideCategoryOtherWrap.classList.add('hidden');
   els.decideCategoryOther.value = '';
   els.decideDecidedBy.value = state.myName;
+  els.decideDecidedBy.readOnly = Boolean(state.googleUser);
   els.decideRegisterYes.checked = true;
   els.decideRegisterMaybe.checked = false;
   els.decideError.textContent = '';

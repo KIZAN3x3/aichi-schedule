@@ -8,6 +8,10 @@ import {
   lockHeaderName,
   roleLabelOf,
   legacyRoleOf,
+  adminKindOf,
+  canManageBranchData,
+  isDataManager,
+  regionBranchesOf,
 } from './auth.js';
 import { api } from './api.js';
 import { OWNER_BRANCH_OPTIONS, SHARED_OWNER_BRANCHES } from './owner-branches.js';
@@ -124,6 +128,15 @@ function populateOwnerBranchSelect(selectEl, { includeBlank, blankLabel } = {}) 
     option.textContent = branch;
     selectEl.appendChild(option);
   }
+}
+
+// 県連管理者の新規登録: 所有の選択肢を自分の県連内の支部だけにする（未定・その他・もう一方の県連は選べない）
+function restrictNewItemOwnerOptions() {
+  els.itemOwnerBranch.innerHTML = '';
+  for (const branch of regionBranchesOf(state.googleUser)) {
+    els.itemOwnerBranch.appendChild(new Option(branch, branch));
+  }
+  syncIsSharedCheckbox(els.itemOwnerBranch, els.itemIsShared);
 }
 
 // 所有が西県連/東県連の間は「全体で使用」を常時チェック・操作不可にする
@@ -330,7 +343,8 @@ function enterApp() {
   els.app.classList.remove('hidden');
   els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
-  els.newItemToggleBtn.classList.toggle('hidden', state.role !== 'admin');
+  els.newItemToggleBtn.classList.toggle('hidden', !isDataManager(state));
+  if (adminKindOf(state.googleUser) === 'region') restrictNewItemOwnerOptions();
   boot();
 }
 
@@ -1101,9 +1115,11 @@ function createActionsRow(item, detail, historyPanel) {
       alert(err.message);
     }
   });
-  if (state.role !== 'admin') {
+  if (!canManageBranchData(state, item.owner_branch)) {
     deleteBtn.disabled = true;
-    deleteBtn.title = '削除はマスター管理者のみ可能です';
+    deleteBtn.title = state.googleUser
+      ? '削除できるのは、所有する支部を管理する管理者だけです'
+      : '削除はマスター管理者のみ可能です';
   }
 
   row.appendChild(editBtn);
