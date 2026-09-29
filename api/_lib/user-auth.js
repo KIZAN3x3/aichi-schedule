@@ -75,4 +75,18 @@ function canSetScope(actor, target, regionOf) {
   return (kind === 'grand' || kind === 'region') && canManageTarget(actor, target, regionOf);
 }
 
-module.exports = { getBearerToken, getAuthUser, adminKind, loadRegionOf, canManageTarget, canSetScope };
+// 相手の支部を変えられるか（destination を省くと「移動先によらず、変えられる相手か」を返す。一覧のボタン表示用）
+//   ・システム管理者: 操作できる相手なら、どの支部へも（ほかのシステム管理者を含む。自分自身は不可）
+//   ・県連管理者: 相手が自分の県連内の人で、移動先も自分の県連内の支部のときだけ（東西をまたぐ移動はシステム管理者だけ）
+//   ・支部管理者・一般: 不可
+function canSetBranch(actor, target, regionOf, destination) {
+  const kind = adminKind(actor);
+  if (!canManageTarget(actor, target, regionOf)) return false;
+  if (kind === 'grand') return true;
+  if (kind === 'region') {
+    return destination === undefined || regionOf(destination) === regionOf(actor.branch);
+  }
+  return false;
+}
+
+module.exports = { getBearerToken, getAuthUser, adminKind, loadRegionOf, canManageTarget, canSetScope, canSetBranch };

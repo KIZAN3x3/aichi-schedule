@@ -2474,3 +2474,23 @@ thead .coordination-col-count-no {
   border: 1px solid var(--border);
   font-family: inherit;
 }
+
+/* 支部・名前の変更の行。狭い画面では入力欄とボタンが折り返す */
+.user-card-edit label {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.user-card-edit select,
+.user-card-edit input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  font-size: 15px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-family: inherit;
+  color: var(--text);
+  background: var(--card-bg);
+}

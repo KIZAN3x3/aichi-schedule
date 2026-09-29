@@ -335,7 +335,97 @@ function createUserCard(user, showBranch) {
   if (user.status === 'active' && user.can_set_scope && !user.is_admin) {
     card.appendChild(createScopeEditor(user));
   }
+  // 支部の変更（システム管理者・県連管理者だけ）と表示名の変更（操作できる相手なら全員）。状態は問わない
+  if (user.can_set_branch) {
+    card.appendChild(createBranchEditor(user));
+  }
+  card.appendChild(createNameEditor(user));
   return card;
+}
+
+// 自分が移動させられる支部（相手の今の支部は除く）
+//   システム管理者: 18支部すべて / 県連管理者: 自分の県連内の支部だけ（東西をまたぐ移動はシステム管理者だけ）
+function branchDestinations(user) {
+  const region = REGION_OF_BRANCH[state.me.branch];
+  const choices = state.kind === 'grand' ? BRANCHES : BRANCHES.filter((b) => REGION_OF_BRANCH[b] === region);
+  return choices.filter((b) => b !== user.branch);
+}
+
+function createBranchEditor(user) {
+  const wrap = document.createElement('div');
+  wrap.className = 'user-card-scope user-card-edit';
+
+  const label = document.createElement('label');
+  label.textContent = '支部';
+  const select = document.createElement('select');
+  select.className = 'user-card-branch-select';
+  select.appendChild(new Option(`${user.branch}（今の支部）`, ''));
+  for (const branch of branchDestinations(user)) select.appendChild(new Option(branch, branch));
+  label.appendChild(select);
+
+  const apply = document.createElement('button');
+  apply.type = 'button';
+  apply.className = 'btn btn-outline btn-small';
+  apply.textContent = '支部を変更';
+  apply.addEventListener('click', async () => {
+    const next = select.value;
+    if (!next) {
+      alert('移動先の支部を選んでください');
+      return;
+    }
+    const notes = [];
+    if (user.admin_scope === 'branch') notes.push('支部管理者の指定が外れます。');
+    if (user.admin_scope === 'region' && REGION_OF_BRANCH[next] !== REGION_OF_BRANCH[user.branch]) {
+      notes.push('県連管理者の指定が外れます。');
+    }
+    const message = [`${user.display_name}さんの支部を「${user.branch}」から「${next}」に変更しますか？`, ...notes].join('\n');
+    if (!confirm(message)) return;
+    apply.disabled = true;
+    await runUpdate({ target_id: user.id, op: 'set_branch', branch: next });
+    apply.disabled = false;
+  });
+
+  wrap.append(label, apply);
+  return wrap;
+}
+
+function createNameEditor(user) {
+  const wrap = document.createElement('div');
+  wrap.className = 'user-card-scope user-card-edit';
+
+  const label = document.createElement('label');
+  label.textContent = '名前';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'user-card-name-input';
+  input.value = user.display_name;
+  input.maxLength = 50;
+  input.setAttribute('aria-label', `${user.display_name}さんの表示名`);
+  label.appendChild(input);
+
+  const apply = document.createElement('button');
+  apply.type = 'button';
+  apply.className = 'btn btn-outline btn-small';
+  apply.textContent = '名前を変更';
+  apply.addEventListener('click', async () => {
+    const next = input.value.trim();
+    if (!next) {
+      alert('名前を入力してください');
+      return;
+    }
+    if (next === user.display_name) {
+      alert('今と同じ名前です');
+      return;
+    }
+    const message = `${user.display_name}さんの表示名を「${next}」に変更しますか？\n（過去の予定や参加に残っている名前は変わりません）`;
+    if (!confirm(message)) return;
+    apply.disabled = true;
+    await runUpdate({ target_id: user.id, op: 'set_name', display_name: next });
+    apply.disabled = false;
+  });
+
+  wrap.append(label, apply);
+  return wrap;
 }
 
 function actionButton(label, className, user, op, confirmMessage) {

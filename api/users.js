@@ -1,7 +1,7 @@
 const { getSupabaseClient } = require('./_lib/supabase');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
-const { getAuthUser, adminKind, loadRegionOf, canManageTarget, canSetScope } = require('./_lib/user-auth');
+const { getAuthUser, adminKind, loadRegionOf, canManageTarget, canSetScope, canSetBranch } = require('./_lib/user-auth');
 
 // Googleログインの利用者（app_users）に関するAPI。
 // Vercel Hobbyプランのサーバーレス関数数上限（12個）のため、1ファイルにまとめてクエリ文字列(?action=)で分岐する。
@@ -9,7 +9,7 @@ const { getAuthUser, adminKind, loadRegionOf, canManageTarget, canSetScope } = r
 //   POST /api/users?action=register : 初回登録（表示名・所属支部。status='pending'）
 //   POST /api/users?action=login    : 最終ログイン日時の記録（Googleから戻った直後に1回だけ呼ぶ）
 //   GET  /api/users?action=list     : ユーザー一覧（管理者のみ。自分の権限範囲のユーザーだけ）
-//   POST /api/users?action=update   : 承認・無効化・再有効化・管理者の種類の変更（管理者のみ）
+//   POST /api/users?action=update   : 承認・無効化・再有効化・管理者の種類・支部・表示名の変更（管理者のみ）
 // どれも Authorization: Bearer <Supabaseのアクセストークン> が必要。共通パスワードでは使えない。
 
 const DISPLAY_NAME_MAX_LENGTH = 50;
@@ -25,6 +25,15 @@ const PUBLIC_COLUMNS = [
 function pick(row) {
   return Object.fromEntries(PUBLIC_COLUMNS.map((key) => [key, row[key]]));
 }
+
+// 表示名の検証（登録と、管理者による変更で共通）。前後の空白を除いて1〜50文字。
+// String#trim は全角スペース(U+3000)も除去する（DBのCHECK制約と同じ考え方）。返り値: 正しければ名前、違えば null
+function normalizeDisplayName(value) {
+  const name = typeof value === 'string' ? value.trim() : '';
+  const length = [...name].length;
+  return length >= 1 && length <= DISPLAY_NAME_MAX_LENGTH ? name : null;
+}
+const DISPLAY_NAME_ERROR = `表示名は1〜${DISPLAY_NAME_MAX_LENGTH}文字で入力してください`;
 
 module.exports = async (req, res) => {
   const { action } = req.query || {};
@@ -82,11 +91,9 @@ async function handleRegister(req, res, { authUser, appUser }) {
     return sendJson(res, 409, { error: 'すでに登録されています' });
   }
   const { display_name, branch } = req.body || {};
-  // String#trim は全角スペース(U+3000)も除去する（DBのCHECK制約と同じ考え方）
-  const name = typeof display_name === 'string' ? display_name.trim() : '';
-  const nameLength = [...name].length;
-  if (nameLength < 1 || nameLength > DISPLAY_NAME_MAX_LENGTH) {
-    return sendJson(res, 400, { error: `表示名は1〜${DISPLAY_NAME_MAX_LENGTH}文字で入力してください` });
+  const name = normalizeDisplayName(display_name);
+  if (!name) {
+    return sendJson(res, 400, { error: DISPLAY_NAME_ERROR });
   }
   if (!BRANCHES.includes(branch)) {
     return sendJson(res, 400, { error: '所属支部を選択してください' });
@@ -171,28 +178,36 @@ async function handleList(req, res, { appUser }) {
         email: emails.get(target.id) || null,
         can_manage: true,
         can_set_scope: canSetScope(appUser, target, regionOf),
+        can_set_branch: canSetBranch(appUser, target, regionOf),
       });
     } else if (isViewOnlyColleague(appUser, target)) {
-      users.push({ ...pick(target), email: null, can_manage: false, can_set_scope: false });
+      users.push({ ...pick(target), email: null, can_manage: false, can_set_scope: false, can_set_branch: false });
     }
   }
   return sendJson(res, 200, { me: { kind }, users });
 }
 
-// POST ?action=update  body: { target_id, op: 'approve'|'disable'|'enable'|'set_scope', admin_scope? }
+// POST ?action=update
+//   body: { target_id, op: 'approve'|'disable'|'enable'|'set_scope'|'set_branch'|'set_name', admin_scope?, branch?, display_name? }
 //   ・approve  : pending → active。approved_at / approved_by を記録する
 //   ・disable  : pending / active → disabled
 //   ・enable   : disabled → active。approved_at / approved_by は上書きしない
 //               （一度も承認されずに無効化された人だけは、ここで初めて記録する）
 //   ・set_scope: active の相手の admin_scope を null / 'branch' / 'region' にする（システム管理者・県連管理者のみ）
-//   状態を条件にした更新にしているため、ほかの管理者と同時に操作しても二重に処理されない（0行なら409）
+//   ・set_branch: 相手の支部を変える（状態は問わない）。システム管理者はどの支部へも、
+//               県連管理者は自分の県連内の支部へだけ（canSetBranch）。支部管理者は admin_scope を null に戻す。
+//               県連管理者は、県連が変わる移動（システム管理者だけができる）のときだけ admin_scope を null に戻す
+//   ・set_name : 相手の表示名を変える（状態は問わない。範囲は承認・無効化と同じ canManageTarget）。
+//               過去の予定・参加などに残っている名前（poster_name 等）は書き換えない
+//   状態を条件にした更新にしているため、ほかの管理者と同時に操作しても二重に処理されない（0行なら409）。
+//   書き換えるのは app_users の対象の1行だけ
 async function handleUpdate(req, res, { appUser }) {
   const kind = adminKind(appUser);
   if (!kind) {
     return sendJson(res, 403, { error: 'ユーザー管理は管理者のみ利用できます' });
   }
 
-  const { target_id, op, admin_scope } = req.body || {};
+  const { target_id, op, admin_scope, branch, display_name } = req.body || {};
   if (typeof target_id !== 'string' || !target_id) {
     return sendJson(res, 400, { error: '対象のユーザーを指定してください' });
   }
@@ -246,6 +261,34 @@ async function handleUpdate(req, res, { appUser }) {
       .update({ admin_scope })
       .eq('id', target.id)
       .eq('status', 'active');
+  } else if (op === 'set_branch') {
+    if (!canSetBranch(appUser, target, regionOf)) {
+      return sendJson(res, 403, { error: '支部を変更する権限がありません' });
+    }
+    if (!BRANCHES.includes(branch)) {
+      return sendJson(res, 400, { error: '支部を選択してください' });
+    }
+    if (branch === target.branch) {
+      return sendJson(res, 400, { error: '今と同じ支部です' });
+    }
+    if (!canSetBranch(appUser, target, regionOf, branch)) {
+      return sendJson(res, 403, { error: '東西の県連をまたぐ移動は、システム管理者だけができます' });
+    }
+    const updates = { branch };
+    // 支部管理者は移動した支部の管理者にはしない。県連管理者も、県連が変わるなら指定を外す
+    if (target.admin_scope === 'branch') updates.admin_scope = null;
+    if (target.admin_scope === 'region' && regionOf(branch) !== regionOf(target.branch)) updates.admin_scope = null;
+    query = supabase.from('app_users').update(updates).eq('id', target.id);
+  } else if (op === 'set_name') {
+    const name = normalizeDisplayName(display_name);
+    if (!name) {
+      return sendJson(res, 400, { error: DISPLAY_NAME_ERROR });
+    }
+    if (name === target.display_name) {
+      return sendJson(res, 400, { error: '今と同じ名前です' });
+    }
+    // ほかの管理者が同時に名前を変えていたら更新しない
+    query = supabase.from('app_users').update({ display_name: name }).eq('id', target.id).eq('display_name', target.display_name);
   } else {
     return sendJson(res, 400, { error: '操作の種類が正しくありません' });
   }
