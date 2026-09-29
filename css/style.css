@@ -1221,7 +1221,15 @@ body {
   word-break: break-word;
 }
 
-/* 種類別: 品名の行の下に、種類ごとの数と場所内訳 */
+/* 種類別: 品名の行の合計・種類ごとの行・内訳（数量を＋−したときはこの中だけを作り直す） */
+.equipment-summary-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* 種類別: 品名の行の下に、種類ごとの数と所有内訳・場所内訳 */
 .equipment-summary-kinds {
   display: flex;
   flex-direction: column;

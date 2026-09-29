@@ -547,10 +547,77 @@ function renderEquipmentList() {
   }
 }
 
-// item_nameでグループ化し、合計数と保管場所別の内訳をまとめる。
-// 種類（item_kind）が入っている備品がある品名は、品名の行の下に種類ごとの数と場所内訳を出す
-// （種類が空の備品は「種類なし」にまとめる。どの備品にも種類が無い品名は今までどおりの表示）
+// item_nameでグループ化し、合計数と保管場所別・所有別の内訳をまとめる。
+// 個数は数量（equipment.quantity）の合計で数え、件数（行数）も「合計 16個（1件）」のように添える。
+// 数量0の備品も内訳に「0個」として出す。
+// 種類（item_kind）が入っている備品がある品名は、品名の行の下に種類ごとの数・所有内訳・場所内訳を出す
+// （種類が空の備品は「種類なし」にまとめる。どの備品にも種類が無い品名は、場所内訳だけを品名の行に出す）。
+// 品名全体の所有内訳は最後に出す。所有が空の備品は「未定」として数える
 const NO_KIND_LABEL = '種類なし';
+const NO_OWNER_LABEL = '未定';
+
+// 数量の合計・件数・場所別・所有別の数量を数える（品名全体・種類ごとで共通）
+function tallyItems(items) {
+  const tally = { quantity: 0, rows: 0, locations: new Map(), owners: new Map() };
+  for (const item of items) {
+    const quantity = Number(item.quantity) || 0;
+    const owner = item.owner_branch || NO_OWNER_LABEL;
+    tally.quantity += quantity;
+    tally.rows += 1;
+    tally.locations.set(item.location, (tally.locations.get(item.location) || 0) + quantity);
+    tally.owners.set(owner, (tally.owners.get(owner) || 0) + quantity);
+  }
+  return tally;
+}
+
+const formatBreakdown = (label, counts) =>
+  `${label}: ${[...counts.entries()].map(([key, quantity]) => `${key}: ${quantity}個`).join(' / ')}`;
+
+function breakdownEl(label, counts) {
+  const el = document.createElement('span');
+  el.className = 'equipment-summary-breakdown';
+  el.textContent = formatBreakdown(label, counts);
+  return el;
+}
+
+// 品名の行の中身（合計・種類ごと・内訳）を作り直す。数量を＋−で変えたときもこれで数え直す
+function fillSummaryStats(stats, groupItems) {
+  stats.innerHTML = '';
+  const total = tallyItems(groupItems);
+
+  const count = document.createElement('span');
+  count.className = 'equipment-summary-count';
+  count.textContent = `合計 ${total.quantity}個（${total.rows}件）`;
+  stats.appendChild(count);
+
+  const kinds = new Map();
+  for (const item of groupItems) {
+    const kindKey = item.item_kind || '';
+    if (!kinds.has(kindKey)) kinds.set(kindKey, []);
+    kinds.get(kindKey).push(item);
+  }
+  if ([...kinds.keys()].some(Boolean)) {
+    // 種類ごとの行（名前順、「種類なし」は最後）
+    const kindKeys = [...kinds.keys()].sort((a, b) => (!a ? 1 : !b ? -1 : a.localeCompare(b, 'ja')));
+    const kindList = document.createElement('div');
+    kindList.className = 'equipment-summary-kinds';
+    for (const kindKey of kindKeys) {
+      const kindTally = tallyItems(kinds.get(kindKey));
+      const kindRow = document.createElement('div');
+      kindRow.className = 'equipment-summary-kind';
+      const kindName = document.createElement('span');
+      kindName.className = 'equipment-summary-kind-name';
+      kindName.textContent = `${kindKey || NO_KIND_LABEL}：${kindTally.quantity}個（${kindTally.rows}件）`;
+      kindRow.append(kindName, breakdownEl('所有内訳', kindTally.owners), breakdownEl('場所内訳', kindTally.locations));
+      kindList.appendChild(kindRow);
+    }
+    stats.appendChild(kindList);
+  } else {
+    stats.appendChild(breakdownEl('場所内訳', total.locations));
+  }
+
+  stats.appendChild(breakdownEl('所有内訳', total.owners));
+}
 
 function renderSummaryList() {
   flushPendingQuantitySaves(els.equipmentSummary);
@@ -569,23 +636,9 @@ function renderSummaryList() {
 
   const groups = new Map();
   for (const item of items) {
-    if (!groups.has(item.item_name)) {
-      groups.set(item.item_name, { count: 0, locations: new Map(), owners: new Map(), kinds: new Map(), items: [] });
-    }
-    const group = groups.get(item.item_name);
-    group.count += 1;
-    group.locations.set(item.location, (group.locations.get(item.location) || 0) + 1);
-    const ownerLabel = item.owner_branch || '未定';
-    group.owners.set(ownerLabel, (group.owners.get(ownerLabel) || 0) + 1);
-    const kindKey = item.item_kind || '';
-    if (!group.kinds.has(kindKey)) group.kinds.set(kindKey, { count: 0, locations: new Map() });
-    const kindGroup = group.kinds.get(kindKey);
-    kindGroup.count += 1;
-    kindGroup.locations.set(item.location, (kindGroup.locations.get(item.location) || 0) + 1);
-    group.items.push(item);
+    if (!groups.has(item.item_name)) groups.set(item.item_name, { items: [] });
+    groups.get(item.item_name).items.push(item);
   }
-  const formatLocations = (locations) =>
-    `場所内訳: ${[...locations.entries()].map(([location, locationCount]) => `${location}: ${locationCount}個`).join(' / ')}`;
 
   for (const [itemName, group] of groups) {
     const row = document.createElement('div');
@@ -596,44 +649,10 @@ function renderSummaryList() {
     name.textContent = itemName;
     row.appendChild(name);
 
-    const count = document.createElement('span');
-    count.className = 'equipment-summary-count';
-    count.textContent = `合計 ${group.count}個`;
-    row.appendChild(count);
-
-    const hasKinds = [...group.kinds.keys()].some(Boolean);
-    if (hasKinds) {
-      // 種類ごとの行（名前順、「種類なし」は最後）
-      const kindKeys = [...group.kinds.keys()].sort((a, b) => (!a ? 1 : !b ? -1 : a.localeCompare(b, 'ja')));
-      const kindList = document.createElement('div');
-      kindList.className = 'equipment-summary-kinds';
-      for (const kindKey of kindKeys) {
-        const kindGroup = group.kinds.get(kindKey);
-        const kindRow = document.createElement('div');
-        kindRow.className = 'equipment-summary-kind';
-        const kindName = document.createElement('span');
-        kindName.className = 'equipment-summary-kind-name';
-        kindName.textContent = `${kindKey || NO_KIND_LABEL}：${kindGroup.count}個`;
-        const kindLocations = document.createElement('span');
-        kindLocations.className = 'equipment-summary-breakdown';
-        kindLocations.textContent = formatLocations(kindGroup.locations);
-        kindRow.append(kindName, kindLocations);
-        kindList.appendChild(kindRow);
-      }
-      row.appendChild(kindList);
-    } else {
-      const locationBreakdown = document.createElement('span');
-      locationBreakdown.className = 'equipment-summary-breakdown';
-      locationBreakdown.textContent = formatLocations(group.locations);
-      row.appendChild(locationBreakdown);
-    }
-
-    const ownerBreakdown = document.createElement('span');
-    ownerBreakdown.className = 'equipment-summary-breakdown';
-    ownerBreakdown.textContent = `所有内訳: ${[...group.owners.entries()]
-      .map(([owner, ownerCount]) => `${owner}: ${ownerCount}個`)
-      .join(' / ')}`;
-    row.appendChild(ownerBreakdown);
+    const stats = document.createElement('div');
+    stats.className = 'equipment-summary-stats';
+    fillSummaryStats(stats, group.items);
+    row.appendChild(stats);
 
     const viewInListBtn = document.createElement('button');
     viewInListBtn.type = 'button';
@@ -651,6 +670,8 @@ function renderSummaryList() {
     for (const groupItem of group.items) {
       detailGroup.appendChild(createDetailPanel(groupItem, { hidden: false }));
     }
+    // 詳細パネルで数量を＋−したら、この品名の合計・内訳を数え直す（一覧全体は作り直さない＝開いたパネルを閉じない）
+    detailGroup.addEventListener('equipment-quantity-change', () => fillSummaryStats(stats, group.items));
 
     setupExpandableRow(row, detailGroup);
 
@@ -742,6 +763,7 @@ async function handleInventoryCheck() {
   }
 }
 
+// 在庫確認は件数（行数）で数える。移動履歴には数量を記録していないため、過去の時点の数量は分からない
 function renderInventoryResult(groups) {
   flushPendingQuantitySaves(els.equipmentInventoryResult);
   els.equipmentInventoryResult.innerHTML = '';
@@ -765,13 +787,13 @@ function renderInventoryResult(groups) {
 
     const count = document.createElement('span');
     count.className = 'equipment-summary-count';
-    count.textContent = `合計 ${group.count}個`;
+    count.textContent = `合計 ${group.count}件`;
     row.appendChild(count);
 
     const breakdown = document.createElement('span');
     breakdown.className = 'equipment-summary-breakdown';
     breakdown.textContent = [...group.locations.entries()]
-      .map(([location, locationCount]) => `${location}: ${locationCount}個`)
+      .map(([location, locationCount]) => `${location}: ${locationCount}件`)
       .join(' / ');
     row.appendChild(breakdown);
 
@@ -1060,6 +1082,9 @@ function createQuantityAdjuster(item, detail) {
     if (tile && tile.classList.contains('equipment-tile')) {
       updateTileQuantityDisplay(tile, quantity);
     }
+
+    // 種類別の画面では、品名の行の数量（合計・内訳）を数え直してもらう（renderSummaryList が受け取る）
+    detail.dispatchEvent(new CustomEvent('equipment-quantity-change', { bubbles: true }));
   }
 
   function scheduleDebouncedSave() {
