@@ -734,3 +734,48 @@ comment on column public.equipment.created_by is '登録した人の名前（表
 
 create index if not exists idx_equipment_created_by_user_id on public.equipment (created_by_user_id);
 
+-- ============================================================
+-- 備品の品名・種類の候補と、備品の種類（migration 0021 と同一内容）
+-- 候補は全支部共通。備品の登録・編集で品名・種類を入れると API が表記をそろえて自動で覚える。
+-- 種類の候補は品名ごと（品名は文字列で持ち、品名の候補表への外部キーにはしない）。
+-- 読み取りは anon にも許可、書き込みは API（service_role）だけ。既存行の item_kind は null のまま
+-- ※ btrim の文字集合 E' \t\r\n　' の末尾は全角スペース(U+3000)の実文字
+-- ============================================================
+create table if not exists public.equipment_item_name_options (
+  id          uuid primary key default gen_random_uuid(),
+  value       text not null
+                constraint equipment_item_name_options_value_check check (
+                  value = btrim(value, E' \t\r\n　') and char_length(value) between 1 and 50
+                ),
+  created_at  timestamptz not null default now(),
+  constraint equipment_item_name_options_value_key unique (value)
+);
+
+create table if not exists public.equipment_item_kind_options (
+  id          uuid primary key default gen_random_uuid(),
+  item_name   text not null,
+  value       text not null
+                constraint equipment_item_kind_options_value_check check (
+                  value = btrim(value, E' \t\r\n　') and char_length(value) between 1 and 50
+                ),
+  created_at  timestamptz not null default now(),
+  constraint equipment_item_kind_options_item_name_value_key unique (item_name, value)
+);
+
+alter table public.equipment
+  add column if not exists item_kind text
+    constraint equipment_item_kind_check check (
+      item_kind is null or (item_kind = btrim(item_kind, E' \t\r\n　') and char_length(item_kind) between 1 and 50)
+    );
+
+comment on table public.equipment_item_name_options is '備品の品名の候補（全支部共通）。備品の登録・編集で品名を入れると自動で覚える';
+comment on table public.equipment_item_kind_options is '備品の種類の候補（品名ごと・全支部共通）。備品の登録・編集で種類を入れると自動で覚える';
+comment on column public.equipment_item_kind_options.item_name is 'この種類の候補が属する品名（文字列。品名の候補表への外部キーにはしない）';
+comment on column public.equipment.item_kind is '種類（任意。例：品名「ポスター」→「〇〇候補 2026」）。既存行はnull';
+
+alter table public.equipment_item_name_options enable row level security;
+alter table public.equipment_item_kind_options enable row level security;
+
+create policy "equipment_item_name_options_select_anon" on public.equipment_item_name_options for select using (true);
+create policy "equipment_item_kind_options_select_anon" on public.equipment_item_kind_options for select using (true);
+

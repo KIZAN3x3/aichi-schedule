@@ -46,6 +46,8 @@ const els = {
   branchOptionsContent: document.getElementById('branch-options-content'),
   placeOptionsList: document.getElementById('place-options-list'),
   categoryOptionsList: document.getElementById('category-options-list'),
+  equipmentOptionsPanel: document.getElementById('equipment-options-panel'),
+  equipmentOptionsList: document.getElementById('equipment-options-list'),
 };
 
 init();
@@ -185,6 +187,7 @@ function enterApp() {
   if (!isDataManager(state)) {
     els.adminOnlyNotice.classList.remove('hidden');
     els.branchOptionsPanel.classList.add('hidden');
+    els.equipmentOptionsPanel.classList.add('hidden');
     return;
   }
   if (adminKindOf(state.googleUser) === 'region') {
@@ -195,6 +198,9 @@ function enterApp() {
   }
   els.adminOnlyNotice.classList.add('hidden');
   els.branchOptionsPanel.classList.remove('hidden');
+  // 備品の品名・種類の候補は全支部共通。候補管理を使える人（県連管理者は東西どちらも）が同じように管理できる
+  els.equipmentOptionsPanel.classList.remove('hidden');
+  renderEquipmentOptions();
 }
 
 async function refreshLists() {
@@ -256,6 +262,95 @@ function createOptionRow(row, type) {
   });
   item.appendChild(deleteBtn);
 
+  return item;
+}
+
+// ===================== 備品の品名・種類の候補（全支部共通） =====================
+// 品名ごとに、その下へ種類の候補を並べる。品名の候補に無い品名（候補に無い既存の品名の備品に種類を付けた場合）の
+// 種類も、その品名の見出しの下に並べる（見出しには削除ボタンを出さない）
+async function renderEquipmentOptions() {
+  const listEl = els.equipmentOptionsList;
+  listEl.innerHTML = '';
+  listEl.appendChild(hintEl('読み込み中…'));
+
+  let names;
+  let kinds;
+  try {
+    [names, kinds] = await Promise.all([api.getEquipmentOptions('item_name'), api.getEquipmentOptions('item_kind')]);
+  } catch (err) {
+    listEl.innerHTML = '';
+    listEl.appendChild(hintEl('備品の候補の取得に失敗しました'));
+    return;
+  }
+  listEl.innerHTML = '';
+  const kindsByName = new Map();
+  for (const kind of kinds) {
+    if (!kindsByName.has(kind.item_name)) kindsByName.set(kind.item_name, []);
+    kindsByName.get(kind.item_name).push(kind);
+  }
+  const nameRows = new Map(names.map((row) => [row.value, row]));
+  const allNames = [...new Set([...names.map((row) => row.value), ...kindsByName.keys()])].sort((a, b) => a.localeCompare(b, 'ja'));
+  if (allNames.length === 0) {
+    listEl.appendChild(hintEl('候補はまだありません'));
+    return;
+  }
+
+  for (const name of allNames) {
+    const group = document.createElement('div');
+    group.className = 'equipment-option-group';
+    const nameRow = nameRows.get(name);
+    const kindRows = kindsByName.get(name) || [];
+    if (nameRow) {
+      group.appendChild(createEquipmentOptionRow(nameRow, 'item_name', `品名：${name}`, kindRows.length));
+    } else {
+      const label = document.createElement('p');
+      label.className = 'hint-text';
+      label.textContent = `品名：${name}（品名の候補にはありません）`;
+      group.appendChild(label);
+    }
+    if (kindRows.length > 0) {
+      const kindList = document.createElement('div');
+      kindList.className = 'equipment-option-kinds';
+      for (const kind of kindRows) kindList.appendChild(createEquipmentOptionRow(kind, 'item_kind', `種類：${kind.value}`));
+      group.appendChild(kindList);
+    }
+    listEl.appendChild(group);
+  }
+}
+
+function createEquipmentOptionRow(row, type, labelText, kindCount = 0) {
+  const item = document.createElement('div');
+  item.className = 'branch-option-row';
+
+  const value = document.createElement('span');
+  value.className = 'branch-option-value';
+  value.textContent = labelText;
+  item.appendChild(value);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'btn btn-danger btn-small';
+  deleteBtn.textContent = '削除';
+  deleteBtn.addEventListener('click', async () => {
+    const message =
+      type === 'item_name'
+        ? [
+            `品名「${row.value}」の候補を削除しますか？`,
+            ...(kindCount > 0 ? [`この品名の種類の候補（${kindCount}件）も一緒に削除します。`] : []),
+            '（備品そのものは消えません）',
+          ].join('\n')
+        : `品名「${row.item_name}」の種類「${row.value}」の候補を削除しますか？\n（備品そのものは消えません）`;
+    if (!confirm(message)) return;
+    deleteBtn.disabled = true;
+    try {
+      await api.deleteBranchOption({ id: row.id, type, password: state.password });
+      await renderEquipmentOptions();
+    } catch (err) {
+      alert(err.message);
+      deleteBtn.disabled = false;
+    }
+  });
+  item.appendChild(deleteBtn);
   return item;
 }
 

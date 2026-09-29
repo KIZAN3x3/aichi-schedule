@@ -3,6 +3,7 @@ const { resolveActor } = require('../_lib/auth');
 const { regionResolverFor, canActOnRow, writerName, writerId, forbiddenMessage } = require('../_lib/permissions');
 const { sendJson, methodNotAllowed } = require('../_lib/http');
 const { SHARED_OWNER_BRANCHES } = require('../_lib/branches');
+const { parseItemName, parseItemKind, addEquipmentOptions } = require('../_lib/branchOptions');
 
 // quantityは数値として扱い、未指定・不正値は1に、負の数は0に丸める
 function normalizeQuantity(value) {
@@ -16,6 +17,8 @@ function normalizeQuantity(value) {
 // PUT /api/equipment/:id    品目名・場所・画像・メモ更新（一般・管理者とも同一権限）
 //                           Googleの人は、更新者名に表示名を使い、ユーザーIDも記録する（送られた updated_by は使わない）
 //                           登録した人（created_by・created_by_user_id）は変えない
+//                           品名・種類（item_kind）は、今の値から変わったときだけ表記をそろえて保存し、候補として覚える。
+//                           変わっていなければ保存済みの値をそのまま残す（候補に無い既存の品名も書き換えず、候補にも入れない）
 // DELETE /api/equipment/:id 備品削除。登録した本人（created_by_user_id が自分）か、所有支部を管理できる管理者
 //                           （システム管理者・共通パスワードの管理者は全部。県連管理者は所有支部が自分の県連内のときだけ）。
 //                           登録した人が空欄の備品（移行前・共通パスワードで登録）は管理者だけ（名前の一致では判定しない）
@@ -24,7 +27,7 @@ module.exports = async (req, res) => {
   const supabase = getSupabaseClient();
 
   if (req.method === 'PUT') {
-    const { item_name, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, quantity, is_countable, password } = req.body || {};
+    const { item_name, item_kind, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, quantity, is_countable, password } = req.body || {};
     const auth = await resolveActor(req, password);
     if (!auth.ok) {
       return sendJson(res, auth.status, { error: auth.error });
@@ -37,7 +40,7 @@ module.exports = async (req, res) => {
 
     const { data: existing, error: fetchError } = await supabase
       .from('equipment')
-      .select('location, owner_branch')
+      .select('location, owner_branch, item_name, item_kind')
       .eq('id', id)
       .single();
     if (fetchError || !existing) {
@@ -45,7 +48,30 @@ module.exports = async (req, res) => {
     }
 
     const updates = { updated_by, updated_by_user_id: writerId(actor), updated_at: new Date().toISOString() };
-    if (item_name !== undefined) updates.item_name = item_name;
+    // 品名: 送られた値が今の値と同じなら何もしない。変わったときだけ、そろえた値で保存して候補に覚える
+    let learnName = false;
+    if (item_name !== undefined && item_name !== existing.item_name) {
+      const name = parseItemName(item_name);
+      if (name.error) {
+        return sendJson(res, 400, { error: name.error });
+      }
+      if (name.value !== existing.item_name) {
+        updates.item_name = name.value;
+        learnName = true;
+      }
+    }
+    // 種類: 品名と同じ考え方。空にしたら null（候補には何も覚えない）
+    let learnKind = false;
+    if (item_kind !== undefined && (item_kind ?? '') !== (existing.item_kind ?? '')) {
+      const kind = parseItemKind(item_kind);
+      if (kind.error) {
+        return sendJson(res, 400, { error: kind.error });
+      }
+      if (kind.value !== (existing.item_kind ?? null)) {
+        updates.item_kind = kind.value;
+        learnKind = kind.value !== null;
+      }
+    }
     if (management_number !== undefined) updates.management_number = management_number;
     if (location !== undefined) updates.location = location;
     if (image_url !== undefined) updates.image_url = image_url;
@@ -85,6 +111,14 @@ module.exports = async (req, res) => {
       if (historyError) {
         console.error('equipment_history insert failed:', historyError.message);
       }
+    }
+
+    // 変えた品名・種類だけを候補として覚える（失敗しても更新自体は成功扱い）
+    if (learnName || learnKind) {
+      await addEquipmentOptions(supabase, {
+        itemName: learnName ? data.item_name : null,
+        kind: learnKind ? { itemName: data.item_name, value: data.item_kind } : null,
+      });
     }
 
     return sendJson(res, 200, data);

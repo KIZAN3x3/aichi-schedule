@@ -13,6 +13,7 @@ import {
 } from './auth.js';
 import { api } from './api.js';
 import { OWNER_BRANCH_OPTIONS, SHARED_OWNER_BRANCHES } from './owner-branches.js';
+import { createOptionPicker, groupKindOptions, kindChoicesFor, OPTION_MAX_LENGTH } from './equipment-options.js';
 
 const PASSWORD_ROLES = { 123: 'user', 123123: 'admin' };
 const ROLE_LABELS = { user: '一般ユーザー', admin: 'マスター管理者' };
@@ -44,6 +45,11 @@ const state = {
   selectedImageFile: null,
   pendingLocalQuantityUpdates: 0,
   pendingRealtimeTimeouts: [],
+  // 備品の品名・種類の候補（全支部共通）。nameOptions: 品名の一覧 / kindOptions: 品名 → 種類の一覧
+  nameOptions: [],
+  kindOptions: new Map(),
+  newNamePicker: null, // 新規登録フォームの品名・種類の入力欄（createOptionPicker）
+  newKindPicker: null,
 };
 
 const els = {
@@ -64,7 +70,8 @@ const els = {
   itemForm: document.getElementById('item-form'),
   itemFormError: document.getElementById('item-form-error'),
   itemFormSubmit: document.getElementById('item-form-submit'),
-  itemName: document.getElementById('item-name'),
+  itemNamePickerWrap: document.getElementById('item-name-picker'),
+  itemKindPickerWrap: document.getElementById('item-kind-picker'),
   itemManagementNumber: document.getElementById('item-management-number'),
   itemQuantity: document.getElementById('item-quantity'),
   itemIsCountable: document.getElementById('item-is-countable'),
@@ -106,9 +113,62 @@ init();
 function init() {
   populateOwnerBranchSelect(els.itemOwnerBranch, { includeBlank: true, blankLabel: '未定' });
   populateOwnerBranchSelect(els.equipmentOwnerFilter, { includeBlank: true, blankLabel: 'すべて' });
+  setupNewItemPickers();
   bindStaticEvents();
   setupGoogleLogin();
   restoreSession();
+}
+
+// ===================== 品名・種類の入力（選択肢＋新しく入力） =====================
+
+function createNamePicker(onChange) {
+  return createOptionPicker({
+    blankLabel: '選択してください',
+    newLabel: '＋ 新しい品名を入力',
+    inputPlaceholder: '新しい品名',
+    currentSuffix: '（今の品名）',
+    ariaLabel: '品目名',
+    onChange,
+  });
+}
+
+function createKindPicker() {
+  return createOptionPicker({
+    blankLabel: '種類なし',
+    newLabel: '＋ 新しい種類を入力',
+    inputPlaceholder: '新しい種類（例：〇〇候補 2026）',
+    currentSuffix: '（今の種類）',
+    ariaLabel: '種類',
+  });
+}
+
+// 新規登録フォームの品名・種類。品名を選び直すと、種類の選択肢をその品名の候補に入れ替える
+function setupNewItemPickers() {
+  state.newKindPicker = createKindPicker();
+  state.newNamePicker = createNamePicker(() => {
+    state.newKindPicker.setChoices(kindChoicesFor(state.kindOptions, state.newNamePicker.getValue()));
+  });
+  els.itemNamePickerWrap.appendChild(state.newNamePicker.el);
+  els.itemKindPickerWrap.appendChild(state.newKindPicker.el);
+  refreshNewItemPickers();
+}
+
+// 候補を読み直したあとに、新規登録フォームの選択肢を作り直す（選んでいるもの・入力中の文字は保つ）
+function refreshNewItemPickers() {
+  state.newNamePicker.setChoices(state.nameOptions);
+  state.newKindPicker.setChoices(kindChoicesFor(state.kindOptions, state.newNamePicker.getValue()));
+}
+
+// 品名・種類の候補を読む（全支部共通）。読めなくても、「新しく入力」で登録はできる
+async function loadEquipmentOptions() {
+  try {
+    const [names, kinds] = await Promise.all([api.getEquipmentOptions('item_name'), api.getEquipmentOptions('item_kind')]);
+    state.nameOptions = names.map((row) => row.value);
+    state.kindOptions = groupKindOptions(kinds);
+  } catch (err) {
+    console.error('品名・種類の候補の取得に失敗:', err);
+  }
+  refreshNewItemPickers();
 }
 
 // 所有プルダウン共通: 先頭に空選択肢、続けて西県連→東県連→1〜16支部→その他の固定19択
@@ -355,7 +415,7 @@ async function boot() {
     renderFatalError(err.message);
     return;
   }
-  await fetchItems();
+  await Promise.all([fetchItems(), loadEquipmentOptions()]);
   subscribeRealtime();
 }
 
@@ -487,7 +547,11 @@ function renderEquipmentList() {
   }
 }
 
-// item_nameでグループ化し、合計数と保管場所別の内訳をまとめる
+// item_nameでグループ化し、合計数と保管場所別の内訳をまとめる。
+// 種類（item_kind）が入っている備品がある品名は、品名の行の下に種類ごとの数と場所内訳を出す
+// （種類が空の備品は「種類なし」にまとめる。どの備品にも種類が無い品名は今までどおりの表示）
+const NO_KIND_LABEL = '種類なし';
+
 function renderSummaryList() {
   flushPendingQuantitySaves(els.equipmentSummary);
   els.equipmentSummary.innerHTML = '';
@@ -506,15 +570,22 @@ function renderSummaryList() {
   const groups = new Map();
   for (const item of items) {
     if (!groups.has(item.item_name)) {
-      groups.set(item.item_name, { count: 0, locations: new Map(), owners: new Map(), items: [] });
+      groups.set(item.item_name, { count: 0, locations: new Map(), owners: new Map(), kinds: new Map(), items: [] });
     }
     const group = groups.get(item.item_name);
     group.count += 1;
     group.locations.set(item.location, (group.locations.get(item.location) || 0) + 1);
     const ownerLabel = item.owner_branch || '未定';
     group.owners.set(ownerLabel, (group.owners.get(ownerLabel) || 0) + 1);
+    const kindKey = item.item_kind || '';
+    if (!group.kinds.has(kindKey)) group.kinds.set(kindKey, { count: 0, locations: new Map() });
+    const kindGroup = group.kinds.get(kindKey);
+    kindGroup.count += 1;
+    kindGroup.locations.set(item.location, (kindGroup.locations.get(item.location) || 0) + 1);
     group.items.push(item);
   }
+  const formatLocations = (locations) =>
+    `場所内訳: ${[...locations.entries()].map(([location, locationCount]) => `${location}: ${locationCount}個`).join(' / ')}`;
 
   for (const [itemName, group] of groups) {
     const row = document.createElement('div');
@@ -530,12 +601,32 @@ function renderSummaryList() {
     count.textContent = `合計 ${group.count}個`;
     row.appendChild(count);
 
-    const locationBreakdown = document.createElement('span');
-    locationBreakdown.className = 'equipment-summary-breakdown';
-    locationBreakdown.textContent = `場所内訳: ${[...group.locations.entries()]
-      .map(([location, locationCount]) => `${location}: ${locationCount}個`)
-      .join(' / ')}`;
-    row.appendChild(locationBreakdown);
+    const hasKinds = [...group.kinds.keys()].some(Boolean);
+    if (hasKinds) {
+      // 種類ごとの行（名前順、「種類なし」は最後）
+      const kindKeys = [...group.kinds.keys()].sort((a, b) => (!a ? 1 : !b ? -1 : a.localeCompare(b, 'ja')));
+      const kindList = document.createElement('div');
+      kindList.className = 'equipment-summary-kinds';
+      for (const kindKey of kindKeys) {
+        const kindGroup = group.kinds.get(kindKey);
+        const kindRow = document.createElement('div');
+        kindRow.className = 'equipment-summary-kind';
+        const kindName = document.createElement('span');
+        kindName.className = 'equipment-summary-kind-name';
+        kindName.textContent = `${kindKey || NO_KIND_LABEL}：${kindGroup.count}個`;
+        const kindLocations = document.createElement('span');
+        kindLocations.className = 'equipment-summary-breakdown';
+        kindLocations.textContent = formatLocations(kindGroup.locations);
+        kindRow.append(kindName, kindLocations);
+        kindList.appendChild(kindRow);
+      }
+      row.appendChild(kindList);
+    } else {
+      const locationBreakdown = document.createElement('span');
+      locationBreakdown.className = 'equipment-summary-breakdown';
+      locationBreakdown.textContent = formatLocations(group.locations);
+      row.appendChild(locationBreakdown);
+    }
 
     const ownerBreakdown = document.createElement('span');
     ownerBreakdown.className = 'equipment-summary-breakdown';
@@ -736,6 +827,13 @@ function createEquipmentTile(item) {
   name.textContent = item.item_name;
   tile.appendChild(name);
 
+  if (item.item_kind) {
+    const kind = document.createElement('span');
+    kind.className = 'equipment-tile-kind';
+    kind.textContent = item.item_kind;
+    tile.appendChild(kind);
+  }
+
   if (item.management_number) {
     const number = document.createElement('span');
     number.className = 'equipment-tile-number';
@@ -823,6 +921,13 @@ function renderDetailBody(item, detail) {
     number.className = 'equipment-management-number';
     number.textContent = `No. ${item.management_number}`;
     detail.appendChild(number);
+  }
+
+  if (item.item_kind) {
+    const kind = document.createElement('p');
+    kind.className = 'equipment-kind';
+    kind.textContent = `種類：${item.item_kind}`;
+    detail.appendChild(kind);
   }
 
   const quantity = document.createElement('p');
@@ -1221,10 +1326,26 @@ function enterEditMode(item, detail) {
     imageFileInput.value = '';
   });
 
-  const nameInput = document.createElement('input');
-  nameInput.type = 'text';
-  nameInput.value = item.item_name;
-  nameInput.placeholder = '品目名';
+  // 品名・種類: 今の値が候補に無くても「（今の品名）」「（今の種類）」として選んだ状態で出す。
+  // そのまま保存すれば、保存済みの値がそのまま送られ、API は何も変えない（候補にも入れない）
+  const kindChoices = (name) => {
+    const choices = kindChoicesFor(state.kindOptions, name);
+    return name === item.item_name ? { choices, current: item.item_kind || '' } : { choices, current: '' };
+  };
+  const kindPicker = createKindPicker();
+  const namePicker = createNamePicker(() => {
+    const { choices, current } = kindChoices(namePicker.getValue());
+    // 元の品名に戻したときだけ今の種類を出し直す。それ以外は選んでいる種類をできるだけ保つ
+    kindPicker.setChoices(choices, namePicker.getValue() === item.item_name ? current : undefined);
+  });
+  namePicker.setChoices(state.nameOptions, item.item_name);
+  kindPicker.setChoices(kindChoicesFor(state.kindOptions, item.item_name), item.item_kind || '');
+  const nameField = document.createElement('div');
+  nameField.className = 'form-field';
+  nameField.append(fieldLabel('品目名'), namePicker.el);
+  const kindField = document.createElement('div');
+  kindField.className = 'form-field';
+  kindField.append(fieldLabel('種類（任意）'), kindPicker.el);
 
   const managementNumberInput = document.createElement('input');
   managementNumberInput.type = 'text';
@@ -1296,9 +1417,9 @@ function enterEditMode(item, detail) {
   saveBtn.textContent = '保存';
   saveBtn.addEventListener('click', async () => {
     const updatedBy = updatedByInput.value.trim();
-    const itemName = nameInput.value.trim();
+    const itemName = namePicker.getValue();
     if (!itemName) {
-      errorText.textContent = '品目名を入力してください';
+      errorText.textContent = '品目名を選ぶか、新しく入力してください';
       return;
     }
     if (!updatedBy) {
@@ -1309,6 +1430,7 @@ function enterEditMode(item, detail) {
     try {
       const payload = {
         item_name: itemName,
+        item_kind: kindPicker.getValue(),
         management_number: managementNumberInput.value.trim(),
         quantity: quantityInput.value,
         is_countable: isCountableInput.checked,
@@ -1330,7 +1452,8 @@ function enterEditMode(item, detail) {
       }
 
       await api.updateEquipment(item.id, payload);
-      await fetchItems();
+      // 変えた品名・種類は API が候補として覚えるので、候補も読み直す
+      await Promise.all([fetchItems(), loadEquipmentOptions()]);
     } catch (err) {
       errorText.textContent = err.message;
       saveBtn.disabled = false;
@@ -1353,7 +1476,8 @@ function enterEditMode(item, detail) {
   detail.appendChild(imageFileInput);
   detail.appendChild(imageCameraBtn);
   detail.appendChild(imageCameraInput);
-  detail.appendChild(nameInput);
+  detail.appendChild(nameField);
+  detail.appendChild(kindField);
   detail.appendChild(managementNumberInput);
   detail.appendChild(quantityLabel);
   detail.appendChild(isCountableLabel);
@@ -1365,6 +1489,13 @@ function enterEditMode(item, detail) {
   detail.appendChild(updatedByInput);
   detail.appendChild(errorText);
   detail.appendChild(actions);
+}
+
+function fieldLabel(text) {
+  const label = document.createElement('span');
+  label.className = 'form-field-label';
+  label.textContent = text;
+  return label;
 }
 
 function loadImageElement(file) {
@@ -1440,6 +1571,11 @@ async function handleCreateItem(event) {
   event.preventDefault();
   els.itemFormError.textContent = '';
 
+  const itemName = state.newNamePicker.getValue();
+  if (!itemName) {
+    els.itemFormError.textContent = '品目名を選ぶか、新しく入力してください';
+    return;
+  }
   const updatedBy = els.itemUpdatedBy.value.trim();
   if (!updatedBy) {
     els.itemFormError.textContent = '更新者名を入力してください';
@@ -1460,7 +1596,8 @@ async function handleCreateItem(event) {
     }
 
     await api.createEquipment({
-      item_name: els.itemName.value.trim(),
+      item_name: itemName,
+      item_kind: state.newKindPicker.getValue(),
       management_number: els.itemManagementNumber.value.trim(),
       quantity: els.itemQuantity.value,
       is_countable: els.itemIsCountable.checked,
@@ -1480,7 +1617,10 @@ async function handleCreateItem(event) {
     els.itemForm.classList.add('hidden');
     els.newItemToggleBtn.textContent = '＋ 備品を登録';
     syncIsSharedCheckbox(els.itemOwnerBranch, els.itemIsShared);
-    await fetchItems();
+    state.newNamePicker.reset();
+    state.newKindPicker.reset();
+    // 登録した品名・種類は API が候補として覚えるので、候補も読み直す
+    await Promise.all([fetchItems(), loadEquipmentOptions()]);
   } catch (err) {
     els.itemFormError.textContent = err.message;
   } finally {

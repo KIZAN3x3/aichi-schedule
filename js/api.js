@@ -32,6 +32,8 @@ export const api = {
   getBranchOptions: (branch, type) =>
     request(`/api/branch-options?branch=${encodeURIComponent(branch)}&type=${encodeURIComponent(type)}`, 'GET'),
   addBranchOption: (payload) => request('/api/branch-options', 'POST', payload),
+  // 備品の品名・種類の候補（全支部共通）。type: 'item_name' | 'item_kind'
+  getEquipmentOptions: (type) => request(`/api/branch-options?type=${encodeURIComponent(type)}`, 'GET'),
   deleteBranchOption: (payload) => request('/api/branch-options', 'DELETE', payload),
 };
 

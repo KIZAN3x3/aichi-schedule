@@ -47,6 +47,12 @@ function canActOnRow(actor, row, regionOf, requestName) {
   return false;
 }
 
+// 全支部共通の入力候補（備品の品名・種類）を管理できるか。
+// 「⚙ 候補管理」を使える人と同じ（共通パスワードの管理者・システム管理者・県連管理者（東西どちらも））
+function canManageSharedOptions(actor) {
+  return isGlobalManager(actor) || (actor.via === 'google' && actor.kind === 'region');
+}
+
 // 書き込む名前: Googleの人は、送られた値ではなく app_users.display_name を使う（共通パスワードの人は今までどおり送られた値）
 function writerName(actor, requestedName) {
   return actor.via === 'google' ? actor.user.display_name : requestedName;
@@ -67,6 +73,7 @@ module.exports = {
   regionResolverFor,
   canManageBranch,
   canActOnRow,
+  canManageSharedOptions,
   writerName,
   writerId,
   forbiddenMessage,

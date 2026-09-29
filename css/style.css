@@ -1197,12 +1197,113 @@ body {
   text-align: left;
 }
 
-.equipment-tile.has-image .equipment-tile-number {
+.equipment-tile.has-image .equipment-tile-number,
+.equipment-tile.has-image .equipment-tile-kind {
   width: 100%;
   padding: 0 8px 6px;
   background: rgba(0, 0, 0, 0.65);
   color: #fff;
   text-align: left;
+}
+
+/* 備品の種類（タイルでは品名の下に小さく） */
+.equipment-tile-kind {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  word-break: break-word;
+}
+
+.equipment-kind {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* 種類別: 品名の行の下に、種類ごとの数と場所内訳 */
+.equipment-summary-kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+}
+
+.equipment-summary-kind {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.equipment-summary-kind-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* 品名・種類の入力（選択肢＋「新しく入力」） */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.form-field-label {
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+.equipment-card-editing .form-field-label {
+  font-size: 13px;
+}
+
+.option-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.option-picker select,
+.option-picker input {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 17px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--card-bg);
+}
+
+.equipment-card-editing .option-picker select,
+.equipment-card-editing .option-picker input {
+  padding: 8px;
+  font-size: 14px;
+}
+
+/* 候補管理: 備品の品名ごとに種類を並べる */
+.equipment-option-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.equipment-option-kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 16px;
+}
+
+.equipment-option-kinds .branch-option-row {
+  padding: 8px 10px;
 }
 
 .equipment-tile.has-image .equipment-tile-quantity {
