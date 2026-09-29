@@ -1,8 +1,8 @@
 const { getSupabaseClient } = require('./_lib/supabase');
 const { resolveActor } = require('./_lib/auth');
-const { regionResolverFor, canManageBranch, writerName, writerId, forbiddenMessage } = require('./_lib/permissions');
+const { isGlobalManager, writerName, writerId } = require('./_lib/permissions');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
-const { SHARED_OWNER_BRANCHES } = require('./_lib/branches');
+const { SHARED_OWNER_BRANCHES, OWNER_BRANCHES } = require('./_lib/branches');
 
 // quantityは数値として扱い、未指定・不正値は1に、負の数は0に丸める
 function normalizeQuantity(value) {
@@ -13,9 +13,11 @@ function normalizeQuantity(value) {
   return Math.max(0, Math.round(num));
 }
 
-// POST /api/equipment : 備品の新規登録（所有支部を管理できる管理者のみ）
-//   システム管理者・共通パスワードの管理者はどの所有支部でも可。県連管理者は所有支部が自分の県連内のときだけ
-//   （所有支部が空欄・「その他」の備品は、県連に属さないため県連管理者は登録できない）
+// POST /api/equipment : 備品の新規登録
+//   Googleでログインした有効な利用者は全員可（支部管理者・一般を含む）。共通パスワードは管理者だけ（一般は不可）。
+//   所有支部は誰でも19択（西県連・東県連・1〜16支部・その他）か未定（空欄）から選べる。
+//   登録した人（created_by・created_by_user_id）はここでだけ入れる（編集では変えない）。
+//   Googleの人は表示名と自分のID、共通パスワードの管理者は送られた名前（IDは空欄）
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return methodNotAllowed(res, ['POST']);
@@ -27,15 +29,12 @@ module.exports = async (req, res) => {
     return sendJson(res, auth.status, { error: auth.error });
   }
   const { actor } = auth;
-  const regionOf = await regionResolverFor(actor);
-  if (!canManageBranch(actor, owner_branch || null, regionOf)) {
-    return sendJson(res, 403, {
-      error: forbiddenMessage(
-        actor,
-        '新規登録はマスター管理者のみ可能です',
-        '備品を登録できるのは、所有する支部を管理する管理者だけです（県連管理者は、所有を自分の県連内の支部にしてください）'
-      ),
-    });
+  // resolveActor を通った Googleの人は status = 'active' の利用者だけ
+  if (actor.via !== 'google' && !isGlobalManager(actor)) {
+    return sendJson(res, 403, { error: '新規登録はマスター管理者のみ可能です' });
+  }
+  if (owner_branch && !OWNER_BRANCHES.includes(owner_branch)) {
+    return sendJson(res, 400, { error: '所有の指定が正しくありません' });
   }
   // 更新者名: Googleの人は表示名（送られた値は使わない）
   const updated_by = writerName(actor, (req.body || {}).updated_by);
@@ -59,6 +58,8 @@ module.exports = async (req, res) => {
       is_countable: Boolean(is_countable),
       updated_by,
       updated_by_user_id: writerId(actor),
+      created_by: updated_by,
+      created_by_user_id: writerId(actor),
     })
     .select()
     .single();

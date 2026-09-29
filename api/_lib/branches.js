@@ -8,4 +8,8 @@ const BRANCHES = [
 // 備品のowner_branchがこれらの場合、is_sharedは常にtrueを強制する（県連所有＝県全体で使う前提のため）
 const SHARED_OWNER_BRANCHES = ['西県連', '東県連'];
 
-module.exports = { BRANCHES, SHARED_OWNER_BRANCHES };
+// 備品の所有（owner_branch）の選択肢。18支部＋その他の19択（未定は空欄＝null）。
+// supabase/schema.sql の equipment.owner_branch の CHECK制約、js/owner-branches.js と一致させること
+const OWNER_BRANCHES = [...BRANCHES, 'その他'];
+
+module.exports = { BRANCHES, SHARED_OWNER_BRANCHES, OWNER_BRANCHES };

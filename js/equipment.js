@@ -8,10 +8,8 @@ import {
   lockHeaderName,
   roleLabelOf,
   legacyRoleOf,
-  adminKindOf,
-  canManageBranchData,
-  isDataManager,
-  regionBranchesOf,
+  canCreateEquipment,
+  canActOnRowFront,
 } from './auth.js';
 import { api } from './api.js';
 import { OWNER_BRANCH_OPTIONS, SHARED_OWNER_BRANCHES } from './owner-branches.js';
@@ -130,12 +128,14 @@ function populateOwnerBranchSelect(selectEl, { includeBlank, blankLabel } = {}) 
   }
 }
 
-// 県連管理者の新規登録: 所有の選択肢を自分の県連内の支部だけにする（未定・その他・もう一方の県連は選べない）
-function restrictNewItemOwnerOptions() {
-  els.itemOwnerBranch.innerHTML = '';
-  for (const branch of regionBranchesOf(state.googleUser)) {
-    els.itemOwnerBranch.appendChild(new Option(branch, branch));
+// 新規登録の所有の初期値: Googleの人は自分の所属支部、共通パスワードの人は未定（空欄）。
+// 選択肢は全員同じ（19択＋未定）。defaultSelected にしておくと、登録後の form.reset() でもこの値に戻る
+function setNewItemOwnerDefault() {
+  const defaultValue = state.googleUser ? state.googleUser.branch : '';
+  for (const option of els.itemOwnerBranch.options) {
+    option.defaultSelected = option.value === defaultValue;
   }
+  els.itemOwnerBranch.value = defaultValue;
   syncIsSharedCheckbox(els.itemOwnerBranch, els.itemIsShared);
 }
 
@@ -343,8 +343,8 @@ function enterApp() {
   els.app.classList.remove('hidden');
   els.roleText.textContent = state.googleUser ? roleLabelOf(state.googleUser) : ROLE_LABELS[state.role];
   els.roleDot.classList.toggle('admin', state.role === 'admin');
-  els.newItemToggleBtn.classList.toggle('hidden', !isDataManager(state));
-  if (adminKindOf(state.googleUser) === 'region') restrictNewItemOwnerOptions();
+  els.newItemToggleBtn.classList.toggle('hidden', !canCreateEquipment(state));
+  setNewItemOwnerDefault();
   boot();
 }
 
@@ -858,6 +858,14 @@ function renderDetailBody(item, detail) {
     detail.appendChild(memo);
   }
 
+  // 登録した人（migration 0020 以降に登録した備品だけ。既存の備品は空欄なので出さない）
+  if (item.created_by) {
+    const created = document.createElement('p');
+    created.className = 'equipment-updated';
+    created.textContent = `登録：${item.created_by}`;
+    detail.appendChild(created);
+  }
+
   const updated = document.createElement('p');
   updated.className = 'equipment-updated';
   updated.textContent = `最終更新: ${item.updated_by} ・ ${formatDateTime(item.updated_at)}`;
@@ -1115,10 +1123,11 @@ function createActionsRow(item, detail, historyPanel) {
       alert(err.message);
     }
   });
-  if (!canManageBranchData(state, item.owner_branch)) {
+  // 登録した本人か、所有支部を管理できる管理者だけ（登録した人が空欄の備品は管理者だけ。名前の一致では判定しない）
+  if (!canActOnRowFront(state, { branch: item.owner_branch, userIds: [item.created_by_user_id], names: [] })) {
     deleteBtn.disabled = true;
     deleteBtn.title = state.googleUser
-      ? '削除できるのは、所有する支部を管理する管理者だけです'
+      ? '削除できるのは、登録した本人か、所有する支部を管理する管理者だけです'
       : '削除はマスター管理者のみ可能です';
   }
 

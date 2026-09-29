@@ -55,6 +55,11 @@ export function isDataManager(session) {
   return session.role === 'admin' || adminKindOf(session.googleUser) === 'region';
 }
 
+// 備品を新規登録できるか（Googleでログインした有効な利用者は全員、共通パスワードは管理者だけ）
+export function canCreateEquipment(session) {
+  return Boolean(session.googleUser) || session.role === 'admin';
+}
+
 // 行に対して本人（または管理者）として操作できるか
 //   row.branch: その行の支部 / row.userIds: 本人のユーザーID / row.names: 本人の名前（IDが空欄の行だけで使う）
 //   ・IDが入っている行: Googleの本人だけ

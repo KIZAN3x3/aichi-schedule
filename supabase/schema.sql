@@ -719,3 +719,18 @@ create index if not exists idx_coordination_responses_registered_by_user_id on p
 create index if not exists idx_equipment_updated_by_user_id on public.equipment (updated_by_user_id);
 create index if not exists idx_equipment_history_moved_by_user_id on public.equipment_history (moved_by_user_id);
 
+-- ============================================================
+-- 備品の「登録した人」（migration 0020 と同一内容）
+-- 新規登録のときだけ入れ、編集では変えない。既存行は null のまま。
+-- 削除の本人判定に使う（登録した人が空欄の備品は、管理者だけが削除できる）
+-- ============================================================
+alter table public.equipment
+  add column if not exists created_by_user_id uuid references public.app_users (id);
+alter table public.equipment
+  add column if not exists created_by text;
+
+comment on column public.equipment.created_by_user_id is '登録した人（app_users.id）。Googleで登録した行だけ入る。移行前の行・共通パスワードで登録した行はnull';
+comment on column public.equipment.created_by is '登録した人の名前（表示用）。新規登録のときだけ入れ、編集では変えない。移行前の行はnull';
+
+create index if not exists idx_equipment_created_by_user_id on public.equipment (created_by_user_id);
+

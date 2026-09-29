@@ -85,7 +85,7 @@ async function fetchEvents(supabase, { from, to, branch, branchesIn }) {
 async function fetchEquipment(supabase, { branch, branchesIn }) {
   let query = supabase
     .from('equipment')
-    .select('item_name,management_number,location,memo,owner_branch,owner_person,is_shared,quantity,is_countable,updated_by,updated_at')
+    .select('item_name,management_number,location,memo,owner_branch,owner_person,is_shared,quantity,is_countable,updated_by,updated_at,created_by')
     .order('item_name', { ascending: true });
   if (branchesIn) {
     // 県連管理者: 所有支部が自分の県連内の備品だけ（空欄・「その他」、もう一方の県連の備品は含めない）
@@ -99,7 +99,7 @@ async function fetchEquipment(supabase, { branch, branchesIn }) {
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  const headers = ['品目名', '管理番号', '保管場所', 'メモ', '所有', '担当者', '共有', '数量', '数量変動あり', '最終更新者', '更新日時'];
+  const headers = ['品目名', '管理番号', '保管場所', 'メモ', '所有', '担当者', '共有', '数量', '数量変動あり', '最終更新者', '更新日時', '登録者'];
   const rows = (data || []).map((r) => [
     r.item_name,
     r.management_number,
@@ -112,6 +112,7 @@ async function fetchEquipment(supabase, { branch, branchesIn }) {
     r.is_countable ? '○' : '',
     r.updated_by,
     formatJstDateTime(r.updated_at),
+    r.created_by,
   ]);
   return { headers, rows, label: '備品一覧' };
 }

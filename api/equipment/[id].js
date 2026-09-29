@@ -1,6 +1,6 @@
 const { getSupabaseClient } = require('../_lib/supabase');
 const { resolveActor } = require('../_lib/auth');
-const { regionResolverFor, canManageBranch, writerName, writerId, forbiddenMessage } = require('../_lib/permissions');
+const { regionResolverFor, canActOnRow, writerName, writerId, forbiddenMessage } = require('../_lib/permissions');
 const { sendJson, methodNotAllowed } = require('../_lib/http');
 const { SHARED_OWNER_BRANCHES } = require('../_lib/branches');
 
@@ -15,8 +15,10 @@ function normalizeQuantity(value) {
 
 // PUT /api/equipment/:id    品目名・場所・画像・メモ更新（一般・管理者とも同一権限）
 //                           Googleの人は、更新者名に表示名を使い、ユーザーIDも記録する（送られた updated_by は使わない）
-// DELETE /api/equipment/:id 備品削除（所有支部を管理できる管理者のみ。県連管理者は所有支部が自分の県連内のときだけ。
-//                           所有支部が空欄・「その他」の備品は、システム管理者・共通パスワードの管理者だけ）
+//                           登録した人（created_by・created_by_user_id）は変えない
+// DELETE /api/equipment/:id 備品削除。登録した本人（created_by_user_id が自分）か、所有支部を管理できる管理者
+//                           （システム管理者・共通パスワードの管理者は全部。県連管理者は所有支部が自分の県連内のときだけ）。
+//                           登録した人が空欄の備品（移行前・共通パスワードで登録）は管理者だけ（名前の一致では判定しない）
 module.exports = async (req, res) => {
   const { id } = req.query;
   const supabase = getSupabaseClient();
@@ -98,19 +100,20 @@ module.exports = async (req, res) => {
 
     const { data: existing, error: fetchError } = await supabase
       .from('equipment')
-      .select('owner_branch')
+      .select('owner_branch, created_by_user_id')
       .eq('id', id)
       .maybeSingle();
     if (fetchError || !existing) {
       return sendJson(res, 404, { error: '備品が見つかりません' });
     }
     const regionOf = await regionResolverFor(actor);
-    if (!canManageBranch(actor, existing.owner_branch, regionOf)) {
+    const owner = { branch: existing.owner_branch, userIds: [existing.created_by_user_id], names: [] };
+    if (!canActOnRow(actor, owner, regionOf)) {
       return sendJson(res, 403, {
         error: forbiddenMessage(
           actor,
           '削除はマスター管理者のみ可能です',
-          'この備品を削除できるのは、所有する支部を管理する管理者だけです'
+          'この備品を削除できるのは、登録した本人か、所有する支部を管理する管理者だけです'
         ),
       });
     }
