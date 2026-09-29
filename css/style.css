@@ -2249,7 +2249,8 @@ thead .coordination-col-count-no {
 }
 
 .status-name-static {
-  flex: 1;
+  /* 7文字分より狭くなるなら、1文字ずつ縦に折り返さず、次の行に回す（ステータスバーは flex-wrap） */
+  flex: 1 1 7em;
   min-width: 0;
   overflow-wrap: anywhere; /* 狭い画面でも名前を省略せず折り返して見せる */
   font-weight: 600;
@@ -2323,14 +2324,61 @@ thead .coordination-col-count-no {
   color: var(--text-muted);
 }
 
+/* 支部の選択（スケジュール画面と同じ .branch-panel の見た目）。支部管理者は自分の支部だけで変更できない */
+.branch-panel select:disabled {
+  color: var(--text);
+  background: var(--bg);
+  opacity: 1;
+}
+
+.users-branch-admins {
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* 承認待ち／有効／無効のアコーディオン（見出しに人数） */
 .users-group {
-  margin-top: 20px;
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.users-group-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px; /* スマホで押しやすいタップ領域の高さ */
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none; /* 標準の開閉三角マーカーを消し、.users-group-chevronで代替する */
+}
+
+.users-group-summary::-webkit-details-marker {
+  display: none;
 }
 
 .users-group-title {
-  margin: 0 0 8px;
+  flex: 1;
+  min-width: 0;
   font-size: 16px;
+  font-weight: 700;
   color: var(--orange-dark);
+}
+
+.users-group-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.users-group[open] .users-group-chevron {
+  transform: rotate(180deg);
+}
+
+.users-group-body {
+  padding: 0 10px 2px;
 }
 
 .user-card {
@@ -2363,6 +2411,19 @@ thead .coordination-col-count-no {
   background: var(--orange-mid);
   border-radius: 999px;
   padding: 2px 10px;
+}
+
+/* 支部管理者の画面に出る、同じ支部のほかの管理者（見るだけ・操作不可） */
+.user-card.is-view-only {
+  background: var(--bg);
+}
+
+.user-card-view-only {
+  font-size: 12px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 1px 8px;
 }
 
 .user-card-meta {

@@ -134,8 +134,21 @@ async function loadEmails() {
   return emails;
 }
 
+// 支部管理者が一覧を開いたときに「見るだけ」で出す、同じ支部の管理者（支部管理者・県連管理者）。
+// 支部管理者は何人でも置けるため、同じ支部のほかの管理者を画面に出せるようにしている。操作はできない（update の判定は変えない）
+function isViewOnlyColleague(actor, target) {
+  return (
+    adminKind(actor) === 'branch' &&
+    target.id !== actor.id &&
+    !target.is_admin &&
+    target.branch === actor.branch &&
+    (target.admin_scope === 'branch' || target.admin_scope === 'region')
+  );
+}
+
 // GET ?action=list
-//   出力: { me: { kind }, users: [...] }。自分の権限範囲のユーザーだけ（自分自身は含めない）
+//   出力: { me: { kind }, users: [...] }。自分の権限範囲のユーザー（can_manage: true）。自分自身は含めない。
+//   支部管理者には、同じ支部の管理者も can_manage: false（見るだけ）で含める。見るだけの行はメールアドレスを返さない
 async function handleList(req, res, { appUser }) {
   const kind = adminKind(appUser);
   if (!kind) {
@@ -150,13 +163,19 @@ async function handleList(req, res, { appUser }) {
   ]);
   if (usersResult.error) throw usersResult.error;
 
-  const users = usersResult.data
-    .filter((target) => canManageTarget(appUser, target, regionOf))
-    .map((target) => ({
-      ...pick(target),
-      email: emails.get(target.id) || null,
-      can_set_scope: canSetScope(appUser, target, regionOf),
-    }));
+  const users = [];
+  for (const target of usersResult.data) {
+    if (canManageTarget(appUser, target, regionOf)) {
+      users.push({
+        ...pick(target),
+        email: emails.get(target.id) || null,
+        can_manage: true,
+        can_set_scope: canSetScope(appUser, target, regionOf),
+      });
+    } else if (isViewOnlyColleague(appUser, target)) {
+      users.push({ ...pick(target), email: null, can_manage: false, can_set_scope: false });
+    }
+  }
   return sendJson(res, 200, { me: { kind }, users });
 }
 

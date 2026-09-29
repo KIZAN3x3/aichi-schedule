@@ -184,6 +184,7 @@
 ### 段階2（migration 0018）で追加したもの
 - **`app_users`**（利用者。auth.usersと1対1）：表示名（一意にしない。別支部の同名の人がいるため）／支部（登録時に本人が入力、必須）／状態（pending=承認待ち・active=有効・disabled=無効）／`is_admin`／`admin_scope`／登録日時／承認日時／承認した人（`approved_by`）／最終ログイン日時（ログイン時のみ更新）
 - **`branch_regions`**（支部と県連の対応表、18行）：西＝西県連・1〜10支部・16支部、東＝東県連・11〜15支部
+  - 同じ対応表を `js/users.js` の `REGION_OF_BRANCH` にも持っている（ユーザー管理画面で県連管理者の支部の選択肢を作るため）。**支部の割り当てを変えるときは両方を直す**
 - 既存テーブルのnull可のユーザーID列（`app_users.id`を参照）：`events.poster_user_id`／`participants.participant_user_id`・`registered_by_user_id`／`coordinations.created_by_user_id`／`coordination_responses.participant_user_id`・`registered_by_user_id`／`equipment.updated_by_user_id`／`equipment_history.moved_by_user_id`。移行前の行はnullのまま
 - `app_users`・`branch_regions`はRLS有効・ポリシーなし（service_roleからのみアクセス）。既存テーブルのRLSポリシーは変えていない
 - 退会者は削除せず`status`をdisabledにする（外部キーはno actionのため、参照されているユーザーは削除できない）
@@ -198,6 +199,9 @@
 - API（`api/users.js`、`?action=`で分岐）: me・register・login・list・update（承認／無効化／再有効化／管理者の種類の変更）。トークンの検証と権限判定は`api/_lib/user-auth.js`
 - 既存APIは`resolveRequestRole`で「共通パスワード、または`active`のGoogleユーザーのトークン」を受け付ける。グランドマスターは今の管理者相当、県連管理者・支部管理者・一般は今の一般相当（本人判定は名前の比較のまま。3-2で見直す）
 - ユーザー管理画面（`users.html`）: Googleでログインした管理者だけが使える。入口はスケジュール画面のヘッダーの「👥 ユーザー管理」（管理者にだけ表示）
+  - 上部の「支部を選択」で絞り込む（グランドマスター：すべて＋18支部／県連管理者：自分の県連内／支部管理者：自分の支部だけ）。選択肢に承認待ちの人数を付け、最後に選んだ支部を覚える。その下に、その支部の有効な支部管理者を全員表示する
+  - 一覧は「承認待ち」「有効」「無効」のアコーディオン（承認待ちだけ最初から開く）
+  - 支部管理者は何人でも置ける（人数制限なし）。支部管理者の画面には、同じ支部のほかの管理者（支部管理者・県連管理者）が「見るだけ」で出る（メールアドレスは出さない、操作ボタンなし）。支部管理者が操作できるのは同じ支部の一般ユーザーだけ
 - 最初のグランドマスターは、Googleで登録したあとSQL Editorで`is_admin = true`・`status = 'active'`にする。`is_admin`はAPIでは変更できない
 
 ### 権限の方針（段階3のAPIで実装する。0018では変更なし）

@@ -1,6 +1,18 @@
 // ユーザー管理画面（Googleでログインした管理者だけが使える）。
-// 表示される・操作できるのは、自分の権限範囲のユーザーだけ（範囲の判定は api/users.js 側で行う）
+// 表示される・操作できるのは、自分の権限範囲のユーザーだけ（範囲の判定は api/users.js 側で行う）。
+// 画面の支部の絞り込み・支部管理者の表示・承認待ちの人数は、api/users.js の list が返す内容だけで作っている
+import { BRANCHES } from './branches.js';
 import { loadGoogleAccount, showAccountGate, googleLogout, usersApi, adminKindOf, roleLabelOf } from './auth.js';
+
+const ALL = 'all';
+const SELECTED_BRANCH_KEY = 'aichi-schedule:usersBranch';
+
+// 支部と県連の対応（supabase の branch_regions と一致させること。県連管理者の選択肢を作るのに使う）
+const REGION_OF_BRANCH = {
+  西県連: '西', '1支部': '西', '2支部': '西', '3支部': '西', '4支部': '西', '5支部': '西',
+  '6支部': '西', '7支部': '西', '8支部': '西', '9支部': '西', '10支部': '西', '16支部': '西',
+  東県連: '東', '11支部': '東', '12支部': '東', '13支部': '東', '14支部': '東', '15支部': '東',
+};
 
 const STATUS_GROUPS = [
   { status: 'pending', title: '承認待ち' },
@@ -18,6 +30,15 @@ const SCOPE_TEXT = {
   branch: '支部管理者として、自分の支部の一般ユーザーの承認・無効化ができます。',
 };
 
+const state = {
+  me: null, // 自分（app_usersの行）
+  kind: null, // 'grand' | 'region' | 'branch'
+  users: [], // list の結果（自分の権限範囲のユーザー。自分自身は含まれない）
+  branch: ALL, // 選んでいる支部（ALL = すべて）
+  // アコーディオンの開閉。承認待ちは最初から開き、有効・無効は閉じておく。操作のあとの読み直しでも保つ
+  open: { pending: true, active: false, disabled: false },
+};
+
 const els = {
   bootLoading: document.getElementById('boot-loading'),
   app: document.getElementById('app'),
@@ -27,6 +48,9 @@ const els = {
   logoutBtn: document.getElementById('logout-btn'),
   notice: document.getElementById('users-notice'),
   noticeText: document.getElementById('users-notice-text'),
+  branchPanel: document.getElementById('users-branch-panel'),
+  branchSelect: document.getElementById('users-branch-select'),
+  branchAdmins: document.getElementById('users-branch-admins'),
   panel: document.getElementById('users-panel'),
   scopeText: document.getElementById('users-scope-text'),
   reloadBtn: document.getElementById('users-reload-btn'),
@@ -56,6 +80,11 @@ async function init() {
     googleLogout();
   });
   els.reloadBtn.addEventListener('click', () => loadList());
+  els.branchSelect.addEventListener('change', () => {
+    state.branch = els.branchSelect.value;
+    saveSelectedBranch(state.branch);
+    render();
+  });
 
   let account = null;
   try {
@@ -84,7 +113,11 @@ async function init() {
     showNotice('ユーザー管理は、管理者だけが使えます。');
     return;
   }
+  state.me = account.user;
+  state.kind = kind;
+  state.branch = initialBranch();
   els.scopeText.textContent = SCOPE_TEXT[kind];
+  els.branchPanel.classList.remove('hidden');
   els.panel.classList.remove('hidden');
   await loadList();
 }
@@ -94,8 +127,80 @@ function showNotice(text) {
   els.app.classList.remove('hidden');
   els.noticeText.textContent = text;
   els.notice.classList.remove('hidden');
+  els.branchPanel.classList.add('hidden');
   els.panel.classList.add('hidden');
 }
+
+// ===================== 支部の選択 =====================
+
+// 自分の権限で選べる支部（ALL を含む）
+//   グランドマスター: すべて＋18支部 / 県連管理者: すべて（自分の県連内）＋自分の県連の支部 / 支部管理者: 自分の支部だけ
+function branchChoices() {
+  if (state.kind === 'grand') return [ALL, ...BRANCHES];
+  if (state.kind === 'region') {
+    const region = REGION_OF_BRANCH[state.me.branch];
+    return [ALL, ...BRANCHES.filter((b) => REGION_OF_BRANCH[b] === region)];
+  }
+  return [state.me.branch];
+}
+
+// 最後に選んだ支部。権限外（または未保存）なら、すべて（支部管理者は自分の支部）
+function initialBranch() {
+  const choices = branchChoices();
+  let saved = null;
+  try {
+    saved = localStorage.getItem(SELECTED_BRANCH_KEY);
+  } catch (err) {
+    saved = null;
+  }
+  return choices.includes(saved) ? saved : choices[0];
+}
+
+function saveSelectedBranch(branch) {
+  try {
+    localStorage.setItem(SELECTED_BRANCH_KEY, branch);
+  } catch (err) {
+    // 保存できなくても表示は続ける
+  }
+}
+
+// 選択肢を作り直す（承認待ちの人数が変わるため、読み直すたびに作る）。選んでいる支部は保つ
+function renderBranchSelect() {
+  const pendingCount = (branch) =>
+    state.users.filter((u) => u.status === 'pending' && (branch === ALL || u.branch === branch)).length;
+  const allLabel = state.kind === 'region' ? 'すべて（自分の県連内）' : 'すべて';
+
+  els.branchSelect.innerHTML = '';
+  for (const branch of branchChoices()) {
+    const count = pendingCount(branch);
+    const name = branch === ALL ? allLabel : branch;
+    els.branchSelect.appendChild(new Option(count > 0 ? `${name}（承認待ち${count}）` : name, branch));
+  }
+  els.branchSelect.value = state.branch;
+  els.branchSelect.disabled = state.kind === 'branch'; // 支部管理者は自分の支部だけ（変更できない）
+}
+
+// 選んだ支部の支部管理者（有効な人）を全員。list に自分自身は含まれないため、自分が該当すれば加える。
+// 支部管理者の画面でも、同じ支部のほかの管理者は list に「見るだけ」（can_manage: false）で含まれる
+function branchAdminNames(branch) {
+  const names = state.users
+    .filter((u) => u.status === 'active' && u.admin_scope === 'branch' && u.branch === branch)
+    .map((u) => u.display_name);
+  if (state.me.admin_scope === 'branch' && state.me.branch === branch) names.unshift(state.me.display_name);
+  return names;
+}
+
+function renderBranchAdmins() {
+  if (state.branch === ALL) {
+    els.branchAdmins.classList.add('hidden');
+    return;
+  }
+  const names = branchAdminNames(state.branch);
+  els.branchAdmins.textContent = `支部管理者：${names.length > 0 ? names.join('、') : 'なし'}`;
+  els.branchAdmins.classList.remove('hidden');
+}
+
+// ===================== 一覧 =====================
 
 async function loadList() {
   els.list.innerHTML = '';
@@ -103,13 +208,20 @@ async function loadList() {
   els.reloadBtn.disabled = true;
   try {
     const { users } = await usersApi('list', 'GET');
-    renderList(users);
+    state.users = users;
+    render();
   } catch (err) {
     els.list.innerHTML = '';
     els.list.appendChild(hint(err.message));
   } finally {
     els.reloadBtn.disabled = false;
   }
+}
+
+function render() {
+  renderBranchSelect();
+  renderBranchAdmins();
+  renderList();
 }
 
 function hint(text) {
@@ -119,29 +231,47 @@ function hint(text) {
   return p;
 }
 
-function renderList(users) {
+function renderList() {
+  const showBranch = state.branch === ALL;
+  const users = showBranch ? state.users : state.users.filter((u) => u.branch === state.branch);
+
   els.list.innerHTML = '';
   for (const group of STATUS_GROUPS) {
     const rows = users.filter((u) => u.status === group.status);
-    const section = document.createElement('section');
-    section.className = `users-group users-group-${group.status}`;
 
-    const heading = document.createElement('h3');
-    heading.className = 'users-group-title';
-    heading.textContent = `${group.title}（${rows.length}人）`;
-    section.appendChild(heading);
+    const details = document.createElement('details');
+    details.className = `users-group users-group-${group.status}`;
+    details.open = state.open[group.status];
+    details.addEventListener('toggle', () => {
+      state.open[group.status] = details.open;
+    });
 
+    const summary = document.createElement('summary');
+    summary.className = 'users-group-summary';
+    const title = document.createElement('span');
+    title.className = 'users-group-title';
+    title.textContent = `${group.title}（${rows.length}人）`;
+    const chevron = document.createElement('span');
+    chevron.className = 'users-group-chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    chevron.textContent = '▼';
+    summary.append(title, chevron);
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'users-group-body';
     if (rows.length === 0) {
-      section.appendChild(hint('該当するユーザーはいません'));
+      body.appendChild(hint('該当するユーザーはいません'));
     } else {
       // 承認待ちは登録の古い順（待たせている順）、それ以外は表示名順
       const sorted =
         group.status === 'pending'
           ? rows
           : [...rows].sort((a, b) => a.display_name.localeCompare(b.display_name, 'ja'));
-      for (const user of sorted) section.appendChild(createUserCard(user));
+      for (const user of sorted) body.appendChild(createUserCard(user, showBranch));
     }
-    els.list.appendChild(section);
+    details.appendChild(body);
+    els.list.appendChild(details);
   }
 }
 
@@ -149,7 +279,8 @@ function formatDateTime(value) {
   return value ? dateTimeFormatter.format(new Date(value)) : 'なし';
 }
 
-function createUserCard(user) {
+// showBranch: 「すべて」を表示しているときだけ、行に支部名を出す
+function createUserCard(user, showBranch) {
   const card = document.createElement('article');
   card.className = 'user-card';
 
@@ -166,16 +297,26 @@ function createUserCard(user) {
     badge.textContent = kindLabel;
     head.appendChild(badge);
   }
+  // 支部管理者の画面に出る、同じ支部のほかの管理者（can_manage: false）は見るだけ
+  const viewOnly = user.can_manage === false;
+  if (viewOnly) {
+    card.classList.add('is-view-only');
+    const note = document.createElement('span');
+    note.className = 'user-card-view-only';
+    note.textContent = '見るだけ';
+    head.appendChild(note);
+  }
   card.appendChild(head);
 
   const meta = document.createElement('dl');
   meta.className = 'user-card-meta';
-  for (const [label, value] of [
-    ['支部', user.branch],
-    ['メール', user.email || '（不明）'],
+  const rows = [
     ['登録日', dateFormatter.format(new Date(user.created_at))],
     ['最終ログイン', formatDateTime(user.last_login_at)],
-  ]) {
+  ];
+  if (!viewOnly) rows.unshift(['メール', user.email || '（不明）']); // 見るだけの行はメールアドレスが返らない
+  if (showBranch) rows.unshift(['支部', user.branch]);
+  for (const [label, value] of rows) {
     const dt = document.createElement('dt');
     dt.textContent = label;
     const dd = document.createElement('dd');
@@ -183,6 +324,7 @@ function createUserCard(user) {
     meta.append(dt, dd);
   }
   card.appendChild(meta);
+  if (viewOnly) return card; // 承認・無効化などのボタンは出さない
 
   const actions = document.createElement('div');
   actions.className = 'user-card-actions';
@@ -246,6 +388,7 @@ function createScopeEditor(user) {
   return wrap;
 }
 
+// 操作のあとは一覧を読み直す（選んでいる支部とアコーディオンの開閉は state に残っているため保たれる）
 async function runUpdate(payload) {
   try {
     await usersApi('update', 'POST', payload);
