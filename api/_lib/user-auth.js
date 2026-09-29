@@ -89,4 +89,23 @@ function canSetBranch(actor, target, regionOf, destination) {
   return false;
 }
 
-module.exports = { getBearerToken, getAuthUser, adminKind, loadRegionOf, canManageTarget, canSetScope, canSetBranch };
+// 相手を削除できるか（状態と権限だけ。記録の有無は api/users.js の削除処理で確かめる）
+//   ・操作できる相手（canManageTarget）で、状態が承認待ち（pending）か無効（disabled）
+//   ・システム管理者（is_admin）は、画面からは誰も削除できない（削除は SQL Editor だけ）
+//   ・支部管理者は、自分の支部の承認待ちの一般ユーザーだけ
+function canDeleteTarget(actor, target, regionOf) {
+  if (!canManageTarget(actor, target, regionOf) || target.is_admin) return false;
+  if (target.status !== 'pending' && target.status !== 'disabled') return false;
+  return adminKind(actor) !== 'branch' || target.status === 'pending';
+}
+
+module.exports = {
+  getBearerToken,
+  getAuthUser,
+  adminKind,
+  loadRegionOf,
+  canManageTarget,
+  canSetScope,
+  canSetBranch,
+  canDeleteTarget,
+};

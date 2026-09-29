@@ -1,7 +1,15 @@
 const { getSupabaseClient } = require('./_lib/supabase');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
-const { getAuthUser, adminKind, loadRegionOf, canManageTarget, canSetScope, canSetBranch } = require('./_lib/user-auth');
+const {
+  getAuthUser,
+  adminKind,
+  loadRegionOf,
+  canManageTarget,
+  canSetScope,
+  canSetBranch,
+  canDeleteTarget,
+} = require('./_lib/user-auth');
 
 // Googleログインの利用者（app_users）に関するAPI。
 // Vercel Hobbyプランのサーバーレス関数数上限（12個）のため、1ファイルにまとめてクエリ文字列(?action=)で分岐する。
@@ -9,7 +17,7 @@ const { getAuthUser, adminKind, loadRegionOf, canManageTarget, canSetScope, canS
 //   POST /api/users?action=register : 初回登録（表示名・所属支部。status='pending'）
 //   POST /api/users?action=login    : 最終ログイン日時の記録（Googleから戻った直後に1回だけ呼ぶ）
 //   GET  /api/users?action=list     : ユーザー一覧（管理者のみ。自分の権限範囲のユーザーだけ）
-//   POST /api/users?action=update   : 承認・無効化・再有効化・管理者の種類・支部・表示名の変更（管理者のみ）
+//   POST /api/users?action=update   : 承認・無効化・再有効化・管理者の種類・支部・表示名の変更・削除（管理者のみ）
 // どれも Authorization: Bearer <Supabaseのアクセストークン> が必要。共通パスワードでは使えない。
 
 const DISPLAY_NAME_MAX_LENGTH = 50;
@@ -34,6 +42,25 @@ function normalizeDisplayName(value) {
   return length >= 1 && length <= DISPLAY_NAME_MAX_LENGTH ? name : null;
 }
 const DISPLAY_NAME_ERROR = `表示名は1〜${DISPLAY_NAME_MAX_LENGTH}文字で入力してください`;
+
+// app_users.id を参照している列（どれも外部キーは no action）。1件でもあれば、その人は削除できない
+const USER_REFERENCES = [
+  ['events', 'poster_user_id'],
+  ['participants', 'participant_user_id'],
+  ['participants', 'registered_by_user_id'],
+  ['coordinations', 'created_by_user_id'],
+  ['coordination_responses', 'participant_user_id'],
+  ['coordination_responses', 'registered_by_user_id'],
+  ['equipment', 'updated_by_user_id'],
+  ['equipment', 'created_by_user_id'],
+  ['equipment_history', 'moved_by_user_id'],
+  ['app_users', 'approved_by'],
+];
+const HAS_RECORDS_MESSAGE = 'この人は予定や参加などの記録があるため削除できません。無効化してください';
+const CHANGED_MESSAGE = 'このユーザーの状態が変わりました。画面を読み直してから操作してください';
+const AUTH_DELETE_WARNING =
+  'アプリの利用者からは削除しましたが、Googleのログイン情報の削除に失敗しました。' +
+  'この人が次にログインすると登録画面に戻ります。必要ならSupabaseのAuthentication画面から削除してください';
 
 module.exports = async (req, res) => {
   const { action } = req.query || {};
@@ -179,9 +206,18 @@ async function handleList(req, res, { appUser }) {
         can_manage: true,
         can_set_scope: canSetScope(appUser, target, regionOf),
         can_set_branch: canSetBranch(appUser, target, regionOf),
+        // 状態と権限だけで判定する（記録の有無は、削除のときに dry_run と本番で確かめる）
+        can_delete: canDeleteTarget(appUser, target, regionOf),
       });
     } else if (isViewOnlyColleague(appUser, target)) {
-      users.push({ ...pick(target), email: null, can_manage: false, can_set_scope: false, can_set_branch: false });
+      users.push({
+        ...pick(target),
+        email: null,
+        can_manage: false,
+        can_set_scope: false,
+        can_set_branch: false,
+        can_delete: false,
+      });
     }
   }
   return sendJson(res, 200, { me: { kind }, users });
@@ -199,8 +235,9 @@ async function handleList(req, res, { appUser }) {
 //               県連管理者は、県連が変わる移動（システム管理者だけができる）のときだけ admin_scope を null に戻す
 //   ・set_name : 相手の表示名を変える（状態は問わない。範囲は承認・無効化と同じ canManageTarget）。
 //               過去の予定・参加などに残っている名前（poster_name 等）は書き換えない
+//   ・delete   : 相手を削除する（handleDeleteUser。dry_run: true なら判定と記録の確認だけで何も書き換えない）
 //   状態を条件にした更新にしているため、ほかの管理者と同時に操作しても二重に処理されない（0行なら409）。
-//   書き換えるのは app_users の対象の1行だけ
+//   書き換えるのは app_users の対象の1行だけ（delete は auth.users の1行も）
 async function handleUpdate(req, res, { appUser }) {
   const kind = adminKind(appUser);
   if (!kind) {
@@ -226,6 +263,10 @@ async function handleUpdate(req, res, { appUser }) {
   // 権限範囲外のユーザーは、存在しないものとして扱う（範囲外の人の有無を知らせない）
   if (!target || !canManageTarget(appUser, target, regionOf)) {
     return sendJson(res, 404, { error: 'ユーザーが見つかりません' });
+  }
+
+  if (op === 'delete') {
+    return handleDeleteUser(res, { appUser, target, regionOf, dryRun: req.body.dry_run === true });
   }
 
   const now = new Date().toISOString();
@@ -300,7 +341,73 @@ async function handleUpdate(req, res, { appUser }) {
   const { data, error } = await query.select();
   if (error) throw error;
   if (data.length === 0) {
-    return sendJson(res, 409, { error: 'このユーザーの状態が変わりました。画面を読み直してから操作してください' });
+    return sendJson(res, 409, { error: CHANGED_MESSAGE });
   }
   return sendJson(res, 200, pick(data[0]));
+}
+
+// 相手が作った記録（app_users.id を参照している行）があるか。10列を同時に数える（どれもインデックスあり。approved_by は app_users 内）
+async function hasUserRecords(supabase, userId) {
+  const counts = await Promise.all(
+    USER_REFERENCES.map(([table, column]) =>
+      supabase.from(table).select('id', { count: 'exact', head: true }).eq(column, userId)
+    )
+  );
+  for (const { count, error } of counts) {
+    if (error) throw error;
+    if (count > 0) return true;
+  }
+  return false;
+}
+
+// update の op='delete'（範囲外の404は呼び出し側で判定済み）
+//   ・判定: システム管理者は画面から削除できない / 有効の人は先に無効化 / 支部管理者は承認待ちの一般だけ / 記録がある人は不可
+//   ・dry_run: 上の判定と記録の確認だけを本番と同じに行い、何も書き換えない（200 { deletable: true, dry_run: true }）
+//   ・本番: app_users の行 → auth.users の順に削除する（app_users.id が auth.users を参照しているため、この順しかない）。
+//     app_users の削除は、判定に使った状態・支部・is_admin・admin_scope を条件にし、0行なら409。
+//     事前確認をすり抜けて記録があった場合は、外部キー（no action）の違反（23503）で止まり409（auth は消さない）。
+//     auth.users の削除だけ失敗した場合は、アプリからは削除できているため 200 に警告を付ける
+//     （その人は次のログインで未登録＝登録画面に戻る。やり直しは Supabase の Authentication 画面から）
+async function handleDeleteUser(res, { appUser, target, regionOf, dryRun }) {
+  if (target.is_admin) {
+    return sendJson(res, 403, { error: 'システム管理者は画面から削除できません' });
+  }
+  if (target.status === 'active') {
+    return sendJson(res, 400, { error: '先に無効化してください' });
+  }
+  if (!canDeleteTarget(appUser, target, regionOf)) {
+    return sendJson(res, 403, { error: '支部管理者が削除できるのは、承認待ちの一般ユーザーだけです' });
+  }
+
+  const supabase = getSupabaseClient();
+  if (await hasUserRecords(supabase, target.id)) {
+    return sendJson(res, 409, { error: HAS_RECORDS_MESSAGE });
+  }
+  if (dryRun) {
+    return sendJson(res, 200, { deletable: true, dry_run: true });
+  }
+
+  let query = supabase
+    .from('app_users')
+    .delete()
+    .eq('id', target.id)
+    .eq('status', target.status)
+    .eq('branch', target.branch)
+    .eq('is_admin', target.is_admin);
+  query = target.admin_scope === null ? query.is('admin_scope', null) : query.eq('admin_scope', target.admin_scope);
+  const { data, error } = await query.select();
+  if (error) {
+    if (error.code === '23503') return sendJson(res, 409, { error: HAS_RECORDS_MESSAGE });
+    throw error;
+  }
+  if (data.length === 0) {
+    return sendJson(res, 409, { error: CHANGED_MESSAGE });
+  }
+
+  const { error: authError } = await supabase.auth.admin.deleteUser(target.id);
+  if (authError && authError.status !== 404 && authError.code !== 'user_not_found') {
+    console.error('users(delete): auth.users の削除に失敗:', authError);
+    return sendJson(res, 200, { deleted: true, auth_deleted: false, warning: AUTH_DELETE_WARNING });
+  }
+  return sendJson(res, 200, { deleted: true, auth_deleted: true });
 }

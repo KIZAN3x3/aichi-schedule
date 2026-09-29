@@ -197,7 +197,7 @@
   - 同じ対応表を `js/branches.js` の `REGION_OF_BRANCH` にも持っている（画面で県連管理者の範囲を判定し、支部の選択肢を作るため。ユーザー管理画面・候補管理・CSV出力・備品・ボタンの表示で使う）。**支部の割り当てを変えるときは両方を直す**
 - 既存テーブルのnull可のユーザーID列（`app_users.id`を参照）：`events.poster_user_id`／`participants.participant_user_id`・`registered_by_user_id`／`coordinations.created_by_user_id`／`coordination_responses.participant_user_id`・`registered_by_user_id`／`equipment.updated_by_user_id`／`equipment_history.moved_by_user_id`。移行前の行はnullのまま
 - `app_users`・`branch_regions`はRLS有効・ポリシーなし（service_roleからのみアクセス）。既存テーブルのRLSポリシーは変えていない
-- 退会者は削除せず`status`をdisabledにする（外部キーはno actionのため、参照されているユーザーは削除できない）
+- 退会者は削除せず`status`をdisabledにする（外部キーはno actionのため、参照されているユーザーは削除できない）。**削除は、記録（予定・参加など）が1件も無い人だけ**（ユーザー管理画面の「削除」。段階3-1の項を参照）
 
 ### 段階3-1で入れたもの（Googleログインと共通パスワードの並行運用）
 - ログイン画面（スケジュール・日程調整・備品管理・候補管理）に「Googleでログイン」を追加。共通パスワードのログインも残す。どちらか一方だけが有効（Googleで始めると保存済みの共通パスワードを消し、共通パスワードでログインするとGoogleのセッションを消す）
@@ -206,7 +206,7 @@
   - ログイン画面から`privacy.html`（プライバシーポリシー）へリンク
 - Googleログイン後: `app_users`に行が無い → 登録画面（表示名＋所属支部）→ 承認待ち／`pending` → 承認待ち画面／`disabled` → 利用できない旨の画面／`active` → アプリ本体。Googleから戻った直後に`last_login_at`を記録
 - Googleでログイン中はヘッダーの名前をGoogleの表示名で固定（編集できない）。保存済みの名前（localStorage）は書き換えない
-- API（`api/users.js`、`?action=`で分岐）: me・register・login・list・update（承認／無効化／再有効化／管理者の種類・支部・表示名の変更）。トークンの検証と権限判定は`api/_lib/user-auth.js`
+- API（`api/users.js`、`?action=`で分岐）: me・register・login・list・update（承認／無効化／再有効化／管理者の種類・支部・表示名の変更／削除）。トークンの検証と権限判定は`api/_lib/user-auth.js`
 - 既存APIは「共通パスワード、または`active`のGoogleユーザーのトークン」を受け付ける（3-1では`resolveRequestRole`。3-2で`resolveActor`に置き換え）
 - ユーザー管理画面（`users.html`）: Googleでログインした管理者だけが使える。入口はスケジュール画面のヘッダーの「👥 ユーザー管理」（管理者にだけ表示）
   - 上部の「支部を選択」で絞り込む（システム管理者：すべて＋18支部／県連管理者：自分の県連内／支部管理者：自分の支部だけ）。選択肢に承認待ちの人数を付け、最後に選んだ支部を覚える。その下に、その支部の有効な支部管理者を全員表示する
@@ -219,6 +219,14 @@
     - 書き換えるのは`app_users`の対象の1行だけ。過去の予定・参加などに残っている名前（`poster_name`等）は書き換えない。変更の履歴は残さない
     - 今の`update`と同じく、判定に使った相手の支部・`is_admin`・`admin_scope`（名前の変更では表示名も）を更新の条件に入れ、判定のあとで変わっていたら409
     - 変更後は一覧を読み直す（選んでいる支部とアコーディオンの開閉は保つ。移動した人は元の支部の一覧から消える）
+  - **削除**（`update`の`op='delete'`）：退会者は無効化が基本。削除できるのは、記録が1件も無い、承認待ちか無効の人だけ（有効の人は400「先に無効化してください」）
+    - 記録＝`app_users.id`を参照している10列（`events.poster_user_id`、`participants`の`participant_user_id`・`registered_by_user_id`、`coordinations.created_by_user_id`、`coordination_responses`の2列、`equipment`の`updated_by_user_id`・`created_by_user_id`、`equipment_history.moved_by_user_id`、`app_users.approved_by`）。1件でもあれば409「この人は予定や参加などの記録があるため削除できません。無効化してください」
+    - できる人：システム管理者（自分以外）、県連管理者（自分の県連内の人）、支部管理者（自分の支部の承認待ちの一般ユーザーだけ）。範囲外は404。**システム管理者（`is_admin = true`）は画面からは誰も削除できない**（SQL Editorだけ。一覧の`can_delete`もfalse）
+    - 一覧の`can_delete`は状態と権限だけで判定する（記録の有無は含めない。一覧を重くしないため）
+    - 画面：承認待ち・無効のカードに赤い「削除」。1回目の確認「〇〇さんを削除しますか？」→ `dry_run: true`で記録の有無だけを調べる（判定は本番と同じ、何も書き換えない）→ 記録があれば理由を出して終わり → 2回目の確認「元に戻せません。本当に削除しますか？」→ 削除
+    - 削除の順番は`app_users`の行 → `auth.users`（`app_users.id`が`auth.users`を参照しているため）。`app_users`は判定に使った状態・支部・`is_admin`・`admin_scope`を条件に消し、0行なら409。事前確認をすり抜けて記録があっても外部キー（no action）の違反で止まり409（authは消さない）
+    - `auth.users`の削除だけ失敗したときは、200に警告（`deleted: true, auth_deleted: false, warning`）を付け、画面は警告をそのまま出す。その人は次のログインで登録画面に戻る。Googleのログイン情報はSupabaseのAuthentication画面から削除する
+    - 削除・書き換えるのは、対象の`app_users`の1行と`auth.users`の1行だけ（Supabaseの仕組みとして、authの内部のセッション等も一緒に消える）。変更の履歴は残さない
 - 最初のシステム管理者は、Googleで登録したあとSQL Editorで`is_admin = true`・`status = 'active'`にする。`is_admin`はAPIでは変更できない
 
 ### 段階3-2で入れたもの（本人判定のユーザーID化と県連単位の権限）
@@ -250,6 +258,7 @@
   - 一般（`is_admin = false`かつ`admin_scope`がnull）：本人のデータのみ編集可。ユーザーIDが空欄の行（移行前の過去分）は管理者のみ編集・削除可
 - **ユーザーの支部・表示名の変更**：支部はシステム管理者（どの支部へも）と県連管理者（自分の県連内の人を、自分の県連内の支部へだけ）。表示名は承認・無効化ができる管理者と同じ範囲。詳しくは段階3-1のユーザー管理画面の項
   - 支部を変えると、その人の管理者としての範囲（支部管理者・県連管理者）も次のリクエストから変わる。予定などの本人判定はユーザーIDで行うため、支部を移っても自分の過去のデータは今までどおり編集できる
+- **退会者とユーザーの削除**：退会者は無効化する（記録は残る）。削除は記録が1件も無い人（登録を間違えた人・承認前にやめた人など）だけ。システム管理者は画面から削除できない
 - **参加登録・回答の取消**：登録した人、本人登録なら本人、管理者
 - **データがどの支部のものか**：予定・日程調整は`branch`、参加・回答は親の予定・日程調整の`branch`、備品は所有支部（`owner_branch`）。県連は`branch_regions`で判定する
 

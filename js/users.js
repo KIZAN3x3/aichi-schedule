@@ -329,6 +329,10 @@ function createUserCard(user, showBranch) {
   } else {
     actions.appendChild(actionButton('再有効化する', 'btn btn-outline btn-small', user, 'enable', `${user.display_name}さんを再び使えるようにしますか？`));
   }
+  // 削除（承認待ち・無効の人で、状態と権限から削除できる人だけ。記録の有無は押したときに確かめる）
+  if (user.can_delete && (user.status === 'pending' || user.status === 'disabled')) {
+    actions.appendChild(deleteButton(user));
+  }
   card.appendChild(actions);
 
   // 管理者の種類の変更（システム管理者・県連管理者だけ。有効なユーザーのみ）
@@ -341,6 +345,39 @@ function createUserCard(user, showBranch) {
   }
   card.appendChild(createNameEditor(user));
   return card;
+}
+
+// 削除: 1回目の確認 → 記録の有無だけを調べる（dry_run。何も書き換えない）→ 記録があれば理由を出して終わり →
+// 無ければ2回目の確認 → 削除。Googleのログイン情報の削除だけ失敗したときは、APIの警告をそのまま出す
+function deleteButton(user) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-danger btn-small';
+  btn.textContent = '削除';
+  btn.addEventListener('click', async () => {
+    if (!confirm(`${user.display_name}さんを削除しますか？`)) return;
+    btn.disabled = true;
+    try {
+      await usersApi('update', 'POST', { target_id: user.id, op: 'delete', dry_run: true });
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+      await loadList();
+      return;
+    }
+    if (!confirm('元に戻せません。本当に削除しますか？')) {
+      btn.disabled = false;
+      return;
+    }
+    try {
+      const result = await usersApi('update', 'POST', { target_id: user.id, op: 'delete' });
+      if (result && result.warning) alert(result.warning);
+    } catch (err) {
+      alert(err.message);
+    }
+    await loadList();
+  });
+  return btn;
 }
 
 // 自分が移動させられる支部（相手の今の支部は除く）
