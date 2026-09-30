@@ -39,7 +39,9 @@ async function request(path, method, body) {
   const data = contentType.includes('application/json') ? await res.json() : null;
   if (!res.ok) {
     if (res.status === 401) redirectToLogin();
-    throw new Error((data && data.error) || `エラーが発生しました (${res.status})`);
+    const err = new Error((data && data.error) || `エラーが発生しました (${res.status})`);
+    err.status = res.status; // 404（ブラインドの調整が見られない・見つからない）を見分けるため
+    throw err;
   }
   return data;
 }
@@ -57,6 +59,10 @@ const api = {
   // 支部ごとの「参加できる人の範囲」の候補（migration 0022）。[{ id, value }]
   getAudienceOptions: (branch) =>
     request(`/api/branch-options?branch=${encodeURIComponent(branch)}&type=audience`, 'GET'),
+  // ブラインドの調整（migration 0023）は RLS で anon から見えないため、API から取る（見てよい人の分だけ返る）
+  getBlindCoordinations: (branch) => request(`/api/coordinations?branch=${encodeURIComponent(branch)}`, 'GET'),
+  getCoordinationByToken: (token) => request(`/api/coordinations?token=${encodeURIComponent(token)}`, 'GET'),
+  getCoordinationById: (id) => request(`/api/coordinations?id=${encodeURIComponent(id)}`, 'GET'),
 };
 
 // coordinationsとcoordination_candidatesの間には外部キーが2本ある
@@ -70,6 +76,9 @@ const COORDINATION_SELECT =
 // URLの?id=は起動時に一度だけ読む。ログイン前後でページ遷移しないSPAのため、
 // ログイン後にenterApp()→boot()が呼ばれた時にも同じ値を参照できる
 let pendingCoordinationId = new URLSearchParams(location.search).get('id');
+// ブラインドの調整の共有リンク（coordination.html?t=<token>）。?id= と違い、URLから消さずに残す
+// （まだ回答していない人が読み直しても、同じ調整が出るようにするため）
+const shareTokenFromUrl = new URLSearchParams(location.search).get('t');
 
 const state = {
   role: null,
@@ -84,6 +93,9 @@ const state = {
   pendingScroll: null, // { id, requireStatus }
   endedGroupOpen: false, // 「終わった日程調整」グループの開閉（Realtimeでの再描画をまたいで保持する）
   googleUser: null, // ログインしている利用者（app_usersの行）
+  // URLの ?t= のトークン。一覧を読み直すたびに、この調整も API から取って一覧に加える（その支部を表示しているときだけ）。
+  // トークンが正しくなかったときは null に戻す
+  shareToken: shareTokenFromUrl,
   audienceOptions: [], // 選んでいる支部の「参加できる人の範囲」の候補（値の配列）
   createAudiencePicker: null, // 作成フォームの範囲の入力欄（選択肢＋新しく入力）
   editAudiencePicker: null, // 編集ダイアログの範囲の入力欄
@@ -108,6 +120,7 @@ const els = {
   coordinationContent: document.getElementById('coordination-content'),
   coordinationDeadline: document.getElementById('coordination-deadline'),
   coordinationAudiencePicker: document.getElementById('coordination-audience-picker'),
+  coordinationBlind: document.getElementById('coordination-blind'),
   coordinationCreatedBy: document.getElementById('coordination-created-by'),
   coordinationFormError: document.getElementById('coordination-form-error'),
   coordinationList: document.getElementById('coordination-list'),
@@ -148,6 +161,7 @@ const els = {
   editContent: document.getElementById('edit-content'),
   editDeadline: document.getElementById('edit-deadline'),
   editAudiencePicker: document.getElementById('edit-audience-picker'),
+  editBlind: document.getElementById('edit-blind'),
   editError: document.getElementById('edit-error'),
   editSubmit: document.getElementById('edit-submit'),
   editCancel: document.getElementById('edit-cancel'),
@@ -312,10 +326,12 @@ async function boot() {
     return;
   }
 
-  // ?id=で開かれた場合は、そのIDが属する支部を画面表示だけ切り替えて詳細を開く。
+  // ?t=（ブラインドの共有リンク）・?id=で開かれた場合は、その調整が属する支部を画面表示だけ切り替えて詳細を開く。
   // ログイン前に開いた場合も、restoreSession→enterApp→bootという同じ経路を通るため、
   // ログイン後に自動でここへ戻ってくる（別途のリダイレクト保存は不要）
-  if (pendingCoordinationId) {
+  if (state.shareToken) {
+    await openTokenCoordination(state.shareToken);
+  } else if (pendingCoordinationId) {
     const id = pendingCoordinationId;
     pendingCoordinationId = null; // ログアウト→再ログインでもう一度開かないよう、使うのは1回だけ
     await openSharedCoordination(id);
@@ -324,28 +340,74 @@ async function boot() {
   }
   loadAudienceOptions(); // ?id=で支部が切り替わった場合もあるため、支部が決まってから読む
   subscribeRealtime();
+  // ブラインドの調整の変更は Realtime で届かない（RLSで見えないため）。画面に戻ったときに読み直して追いつく
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && state.branch) refreshList();
+  });
 }
 
-async function openSharedCoordination(id) {
+// 1件を読む。通常の調整は anon で直接、見つからなければ（ブラインドの調整）API から（見てよい人のときだけ返る）。
+// 見つからない・見られないときは null
+async function fetchCoordinationById(id) {
   const { data, error } = await state.supabase
     .from('coordinations')
     .select(COORDINATION_SELECT)
     .eq('id', id)
     .maybeSingle();
+  if (error) throw error;
+  if (data) return data;
+  try {
+    return await api.getCoordinationById(id);
+  } catch (err) {
+    if (err.status === 404 || err.status === 400) return null;
+    throw err;
+  }
+}
+
+async function openSharedCoordination(id) {
+  let data = null;
+  try {
+    data = await fetchCoordinationById(id);
+  } catch (err) {
+    console.error(err);
+  }
   removeIdParamFromUrl();
 
-  if (error || !data) {
+  if (!data) {
     els.coordinationList.innerHTML = '';
     els.coordinationList.appendChild(renderNotFoundBox());
     return;
   }
+  await showOpenedCoordination(data);
+}
 
+// ?t=<token> で開く（ブラインドの共有リンク）。URLの ?t= は消さない
+async function openTokenCoordination(token) {
+  let data = null;
+  try {
+    data = await api.getCoordinationByToken(token);
+  } catch (err) {
+    if (err.status !== 404) console.error(err);
+  }
+  if (!data) {
+    state.shareToken = null;
+    els.coordinationList.innerHTML = '';
+    els.coordinationList.appendChild(
+      renderNotFoundBox('この日程調整は見つかりませんでした（リンクが正しくないか、削除された可能性があります）')
+    );
+    return;
+  }
+  await showOpenedCoordination(data);
+}
+
+// 開いた調整の支部に、画面表示だけ切り替えて詳細を開く
+async function showOpenedCoordination(data) {
   // 支部の切り替えは画面表示だけ。localStorageのaichi-schedule:branchは書き換えない
   state.branch = data.branch;
   els.branchSelect.value = data.branch;
-  state.accordionOpen.add(id);
+  state.accordionOpen.add(data.id);
   // スクロールは描画後に予約で行う（対象が「終わった日程調整」の中なら、renderListがグループを開いてから）
-  state.pendingScroll = { id, requireStatus: null };
+  state.pendingScroll = { id: data.id, requireStatus: null };
 
   await refreshList();
 }
@@ -358,10 +420,10 @@ function removeIdParamFromUrl() {
   history.replaceState(history.state, '', url.pathname + url.search + url.hash);
 }
 
-function renderNotFoundBox() {
+function renderNotFoundBox(message = 'この日程調整は見つかりませんでした（削除された可能性があります）') {
   const box = document.createElement('div');
   box.className = 'coordination-not-found';
-  box.appendChild(hintEl('この日程調整は見つかりませんでした（削除された可能性があります）'));
+  box.appendChild(hintEl(message));
   const backLink = document.createElement('a');
   backLink.href = 'coordination.html';
   backLink.className = 'btn btn-outline btn-small';
@@ -384,11 +446,27 @@ async function refreshList() {
     els.coordinationList.appendChild(hintEl('支部を選択してください'));
     return;
   }
-  const { data, error } = await state.supabase
-    .from('coordinations')
-    .select(COORDINATION_SELECT)
-    .eq('branch', state.branch)
-    .order('created_at', { ascending: false });
+  const branch = state.branch;
+  // 通常の調整は anon で直接（RLSでブラインドは返らない）。ブラインドは API から、見てよい人の分と ?t= の分を取る。
+  // API が失敗しても、通常の調整は今までどおり出す
+  const [{ data, error }, blind, shared] = await Promise.all([
+    state.supabase
+      .from('coordinations')
+      .select(COORDINATION_SELECT)
+      .eq('branch', branch)
+      .order('created_at', { ascending: false }),
+    api.getBlindCoordinations(branch).catch((err) => {
+      console.error(err);
+      return [];
+    }),
+    state.shareToken
+      ? api.getCoordinationByToken(state.shareToken).catch((err) => {
+          console.error(err);
+          return null;
+        })
+      : null,
+  ]);
+  if (branch !== state.branch) return; // 読み込み中に支部が変わった（新しい支部の読み込みに任せる）
 
   if (error) {
     console.error(error);
@@ -396,7 +474,12 @@ async function refreshList() {
     els.coordinationList.appendChild(hintEl('日程調整の取得に失敗しました'));
     return;
   }
-  state.coordinations = data || [];
+  // 同じ調整が重なったら先に入れた方を使う（並び順は renderList の groupCoordinations で決める）
+  const byId = new Map();
+  for (const c of [...(data || []), ...(blind || []), ...(shared ? [shared] : [])]) {
+    if (c.branch === branch && !byId.has(c.id)) byId.set(c.id, c);
+  }
+  state.coordinations = [...byId.values()];
   renderList();
 }
 
@@ -592,7 +675,11 @@ function formatCandidateLabel(candidate) {
   return `${dateLabel}${secondLine}`;
 }
 
+// 共有リンク。ブラインドの調整はトークンのリンク（?t=）、通常の調整は今までどおり ?id=
 function buildCoordinationUrl(coordination) {
+  if (coordination.is_blind && coordination.share_token) {
+    return new URL(`coordination.html?t=${encodeURIComponent(coordination.share_token)}`, location.href).href;
+  }
   return new URL(`coordination.html?id=${coordination.id}`, location.href).href;
 }
 
@@ -719,6 +806,14 @@ function createCoordinationCard(coordination) {
     metaRow.appendChild(audience);
   }
 
+  if (coordination.is_blind) {
+    const blindBadge = document.createElement('span');
+    blindBadge.className = 'coordination-blind-badge';
+    blindBadge.textContent = '🔒 限定';
+    blindBadge.title = 'ブラインド（リンクを知っている人だけ）';
+    metaRow.appendChild(blindBadge);
+  }
+
   const badge = document.createElement('span');
   badge.className = coordination.status === 'decided' ? 'finished-badge' : 'coordination-status-open';
   badge.textContent = coordination.status === 'decided' ? '決定済み' : '調整中';
@@ -740,6 +835,14 @@ function createCoordinationCard(coordination) {
   meta.className = 'coordination-meta';
   meta.textContent = `${coordination.branch} ・ 場所: ${coordination.place}`;
   body.appendChild(meta);
+
+  if (coordination.is_blind) {
+    const blindNote = document.createElement('p');
+    blindNote.className = 'coordination-blind-note';
+    blindNote.textContent =
+      '🔒 ブラインド：一覧には、作成者・この支部を管理する管理者・回答した人にだけ表示されます。ほかの人にはリンクで伝えてください。';
+    body.appendChild(blindNote);
+  }
 
   if (coordination.audience) {
     const audience = document.createElement('p');
@@ -1190,6 +1293,7 @@ async function handleCreateCoordination(event) {
       content: els.coordinationContent.value.trim(),
       reply_deadline: els.coordinationDeadline.value || undefined,
       audience: state.createAudiencePicker.getValue(), // 空なら範囲なし
+      is_blind: els.coordinationBlind.checked,
       candidates,
     });
     loadAudienceOptions(); // 新しく入力した範囲は候補に入るため読み直す
@@ -1353,6 +1457,7 @@ async function handleAnswerSubmit(event) {
       participant_name: name,
       comment,
       answers,
+      token: answerDialogCtx.coordination.share_token || undefined, // ブラインドの調整は、トークンを知っている人も回答できる
     });
     els.answerDialog.close();
     await refreshList();
@@ -1374,6 +1479,7 @@ async function handleAnswerDialogDelete() {
     await api.deleteResponse({
       coordination_id: coordination.id,
       participant_name: editingResponse.participant_name,
+      token: coordination.share_token || undefined,
     });
     els.answerDialog.close();
     await refreshList();
@@ -1411,6 +1517,7 @@ function openEditDialog(coordination) {
   // 今の範囲が候補に無くても「〇〇（今の範囲）」として選んだ状態で出す（そのまま保存しても変わらない）
   state.editAudiencePicker.reset();
   state.editAudiencePicker.setChoices(state.audienceOptions, coordination.audience || null);
+  els.editBlind.checked = Boolean(coordination.is_blind);
   els.editCandidatesList.innerHTML = '';
   for (const candidate of sortedCandidates(coordination)) {
     els.editCandidatesList.appendChild(createCandidateRow(candidate));
@@ -1467,12 +1574,12 @@ async function handleEditSubmit(event) {
   els.editSubmit.disabled = true;
   try {
     // 編集画面を開いている間に回答が増えている場合もあるため、確認の前に最新のデータを取り直す
-    const { data: latest, error } = await state.supabase
-      .from('coordinations')
-      .select(COORDINATION_SELECT)
-      .eq('id', editDialogCtx.coordinationId)
-      .maybeSingle();
-    if (error) {
+    // （ブラインドの調整は anon から見えないため、API から取る）
+    let latest;
+    try {
+      latest = await fetchCoordinationById(editDialogCtx.coordinationId);
+    } catch (err) {
+      console.error(err);
       els.editError.textContent = '最新の内容を取得できませんでした。時間をおいて再度お試しください';
       return;
     }
@@ -1496,6 +1603,7 @@ async function handleEditSubmit(event) {
       content: els.editContent.value.trim(),
       reply_deadline: els.editDeadline.value || undefined,
       audience: state.editAudiencePicker.getValue(), // 空なら範囲なし
+      is_blind: els.editBlind.checked, // 通常⇔ブラインドの切り替え（リンクのトークンは変わらない）
       candidates,
     });
     loadAudienceOptions(); // 範囲を変えた場合は候補に入るため読み直す

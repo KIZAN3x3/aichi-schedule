@@ -407,7 +407,8 @@ grant execute on function public.decide_coordination to service_role;
 -- id付きで渡された候補がこの調整に無い場合は、ほかの人の編集と衝突したとしてP0004で中止する。
 -- 権限（作成者本人かマスター管理者か）の判定はAPIレイヤーの責務（decide_coordinationと同じ）
 -- p_audience（migration 0022で追加）: 参加できる人の範囲（null＝範囲なし。APIが今の値を残すときは今の値を渡す）
--- ※ coordinations.audience 列はこのファイルの末尾（migration 0022 の節）で追加している
+-- p_is_blind（migration 0023で追加）: ブラインドか（null＝今の値のまま）
+-- ※ coordinations.audience・is_blind 列はこのファイルの末尾（migration 0022・0023 の節）で追加している
 --   （plpgsql の本体は実行時に解釈されるため、関数を先に作っても問題ない）
 create or replace function public.update_coordination(
   p_coordination_id uuid,
@@ -416,7 +417,8 @@ create or replace function public.update_coordination(
   p_content         text,
   p_reply_deadline  date,
   p_candidates      jsonb,  -- [{ "id"?: uuid, "date": "YYYY-MM-DD", "time"?: "HH:MM", "note"?: text }, ...]（表示順）
-  p_audience        text default null
+  p_audience        text    default null,
+  p_is_blind        boolean default null
 ) returns void
 language plpgsql
 as $$
@@ -557,7 +559,8 @@ begin
       place          = btrim(p_place),
       content        = btrim(p_content),
       reply_deadline = p_reply_deadline,
-      audience       = v_audience
+      audience       = v_audience,
+      is_blind       = coalesce(p_is_blind, is_blind)
   where id = p_coordination_id;
 end;
 $$;
@@ -595,6 +598,8 @@ create policy "equipment_select_anon"               on public.equipment         
 create policy "equipment_history_select_anon"       on public.equipment_history       for select using (true);
 create policy "branch_place_options_select_anon"    on public.branch_place_options    for select using (true);
 create policy "branch_category_options_select_anon" on public.branch_category_options for select using (true);
+-- ※ coordinations・候補日・回答者・回答の4つのポリシーは、このファイルの末尾（migration 0023 の節）で
+--   「ブラインドの調整は見えない」形に作り直している（is_blind 列を末尾で追加しているため、ここでは元の形で作る）
 create policy "coordinations_select_anon"           on public.coordinations           for select using (true);
 create policy "coordination_candidates_select_anon" on public.coordination_candidates for select using (true);
 create policy "coordination_responses_select_anon"  on public.coordination_responses  for select using (true);
@@ -836,3 +841,90 @@ from (values
 ) as b(branch)
 cross join (values ('県連役員'), ('支部長'), ('支部役員のみ'), ('支部全員')) as v(value)
 on conflict (branch, value) do nothing;
+
+-- ============================================================
+-- 日程調整のブラインド（リンクを知っている人だけ）と共有トークン（migration 0023 と同一内容。
+-- update_coordination の p_is_blind は上の関数に反映済み）
+-- ブラインドの調整は RLS で anon・authenticated から見えない。API（service_role）が見てよい人
+-- （作成者本人・その支部を管理できる管理者・回答した人）か、トークンを持つ人にだけ返す（api/_lib/coordinationAccess.js）。
+-- トークンの表は RLS 有効・ポリシーなし（API からだけ読む）。Realtime には入れない
+-- ============================================================
+alter table public.coordinations
+  add column if not exists is_blind boolean not null default false;
+
+comment on column public.coordinations.is_blind is
+  'ブラインド（リンクを知っている人だけ）か。true の調整は一覧に出さず、APIが見てよい人かトークンを持つ人にだけ返す。既存行はfalse';
+
+create table if not exists public.coordination_share_tokens (
+  coordination_id uuid primary key references public.coordinations (id) on delete cascade,
+  token           text not null default replace(gen_random_uuid()::text, '-', '')
+                    constraint coordination_share_tokens_token_check check (token ~ '^[0-9a-f]{32}$'),
+  created_at      timestamptz not null default now(),
+  constraint coordination_share_tokens_token_key unique (token)
+);
+
+comment on table public.coordination_share_tokens is
+  '日程調整の共有トークン（coordination.html?t=<token>）。RLS有効・ポリシーなしで、API（service_role）からだけ読む';
+
+alter table public.coordination_share_tokens enable row level security;
+revoke all on table public.coordination_share_tokens from anon;
+revoke all on table public.coordination_share_tokens from authenticated;
+
+create or replace function public.coordinations_create_share_token()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.coordination_share_tokens (coordination_id)
+  values (new.id)
+  on conflict (coordination_id) do nothing;
+  return new;
+end;
+$$;
+
+revoke execute on function public.coordinations_create_share_token() from public;
+revoke execute on function public.coordinations_create_share_token() from anon;
+revoke execute on function public.coordinations_create_share_token() from authenticated;
+
+drop trigger if exists trg_coordinations_create_share_token on public.coordinations;
+create trigger trg_coordinations_create_share_token
+  after insert on public.coordinations
+  for each row
+  execute function public.coordinations_create_share_token();
+
+insert into public.coordination_share_tokens (coordination_id)
+select id from public.coordinations
+on conflict (coordination_id) do nothing;
+
+drop policy if exists "coordinations_select_anon" on public.coordinations;
+create policy "coordinations_select_anon"
+  on public.coordinations for select
+  using (not is_blind);
+
+drop policy if exists "coordination_candidates_select_anon" on public.coordination_candidates;
+create policy "coordination_candidates_select_anon"
+  on public.coordination_candidates for select
+  using (exists (
+    select 1 from public.coordinations c
+    where c.id = coordination_candidates.coordination_id and not c.is_blind
+  ));
+
+drop policy if exists "coordination_responses_select_anon" on public.coordination_responses;
+create policy "coordination_responses_select_anon"
+  on public.coordination_responses for select
+  using (exists (
+    select 1 from public.coordinations c
+    where c.id = coordination_responses.coordination_id and not c.is_blind
+  ));
+
+drop policy if exists "coordination_answers_select_anon" on public.coordination_answers;
+create policy "coordination_answers_select_anon"
+  on public.coordination_answers for select
+  using (exists (
+    select 1
+    from public.coordination_responses r
+    join public.coordinations c on c.id = r.coordination_id
+    where r.id = coordination_answers.response_id and not c.is_blind
+  ));

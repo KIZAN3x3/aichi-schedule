@@ -1776,6 +1776,23 @@ body {
   color: var(--text-muted);
 }
 
+/* ブラインド（リンクを知っている人だけ）: カードのバッジ・本文の説明・フォームの説明 */
+.coordination-blind-badge {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--orange-dark);
+}
+
+.coordination-blind-note,
+.coordination-blind-help {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
 /* 閉じたカードの2段目に出す範囲。長い範囲は省略し、作成日・バッジを押し出さない */
 .coordination-audience-chip {
   flex-shrink: 1;

@@ -4,6 +4,13 @@ const { regionResolverFor, canActOnRow, writerName, writerId } = require('./_lib
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 const { addBranchOption } = require('./_lib/branchOptions');
+const {
+  COORDINATION_SELECT,
+  respondedCoordinationIds,
+  canViewCoordination,
+  coordinationIdByToken,
+  shareTokensFor,
+} = require('./_lib/coordinationAccess');
 
 const MAX_CANDIDATES = 30;
 // 候補日の最低件数と、その不足時の文言（js/coordination.js の MIN_CANDIDATES / 文言と完全に一致させること）
@@ -19,12 +26,15 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 // Vercel Hobbyプランのサーバーレス関数数上限（12個）を超えないよう、
 // 元は3ファイルだった以下のエンドポイントをこの1ファイルにまとめている。
 // 「/:id」「/:id/decide」というパス区切りの代わりに、クエリ文字列(?id=&action=)で分岐する。
+//   GET    /api/coordinations?branch=xxx           : その支部のブラインドの調整のうち、見てよい人に当たるもの（migration 0023）
+//   GET    /api/coordinations?token=xxx            : トークンの調整1件（coordination.html?t= のリンク用）
+//   GET    /api/coordinations?id=xxx               : 1件（通常の調整か、見てよい人のときだけ）
 //   POST   /api/coordinations                     : 新規作成（旧 api/coordinations.js）
 //   PUT    /api/coordinations?id=xxx               : 編集（調整中のときだけ。DB関数update_coordination）
 //   DELETE /api/coordinations?id=xxx               : 削除（旧 api/coordinations/[id].js）
 //   POST   /api/coordinations?id=xxx&action=decide : 決定（旧 api/coordinations/[id]/decide.js）
-// GET /api/coordinations/:id（1件取得）は、フロントのどこからも呼ばれていなかったため統合時に廃止した
-// （専用URL用の取得は js/coordination.js が anon key で直接Supabaseをselectしている）。
+// 通常の調整の一覧・専用URL（?id=）の取得は、今までどおり js/coordination.js が anon key で直接Supabaseをselectする。
+// ブラインドの調整は RLS で anon から見えないため、上の GET で返す（判定は api/_lib/coordinationAccess.js）。
 
 // 生のDBエラーをクライアントに返さないための日本語メッセージ変換（作成・削除用）
 function coordinationErrorResponse(error) {
@@ -83,6 +93,9 @@ async function canActOnCoordination(actor, existing) {
 module.exports = async (req, res) => {
   const { id, action } = req.query;
 
+  if (req.method === 'GET') {
+    return handleGet(req, res);
+  }
   if (req.method === 'POST' && !id) {
     return handleCreate(req, res);
   }
@@ -95,8 +108,95 @@ module.exports = async (req, res) => {
   if (req.method === 'DELETE' && id) {
     return handleDelete(req, res, id);
   }
-  return methodNotAllowed(res, ['POST', 'PUT', 'DELETE']);
+  return methodNotAllowed(res, ['GET', 'POST', 'PUT', 'DELETE']);
 };
+
+// ブラインドの調整に、リンク用のトークン（share_token）を付ける。通常の調整には付けない（リンクは ?id= のまま）
+async function withShareTokens(supabase, coordinations) {
+  const blindIds = coordinations.filter((c) => c.is_blind).map((c) => c.id);
+  const tokens = await shareTokensFor(supabase, blindIds);
+  return coordinations.map((c) => (c.is_blind ? { ...c, share_token: tokens.get(c.id) || null } : c));
+}
+
+async function fetchCoordination(supabase, id) {
+  const { data, error } = await supabase.from('coordinations').select(COORDINATION_SELECT).eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// GET /api/coordinations : 日程調整の取得（ログインが必要）。どれも画面と同じ形（COORDINATION_SELECT）で返す
+//   ?token=xxx  … トークンの調整1件（通常・ブラインドどちらも）。トークンが正しくなければ404
+//   ?id=xxx     … 1件。ブラインドは見てよい人のときだけ。それ以外は404（ブラインドの調整があることも伝えない）
+//   ?branch=xxx … その支部のブラインドの調整のうち、見てよい人に当たるもの（作成日時の新しい順）。
+//                 通常の調整は返さない（画面が anon で直接読むため）
+//   見てよい人: 作成者本人・その支部を管理できる管理者（システム管理者・自県連の県連管理者）・回答した人（代理登録を含む）
+async function handleGet(req, res) {
+  const { branch, token, id } = req.query;
+  const auth = await resolveActor(req);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
+  }
+  const { actor } = auth;
+  const supabase = getSupabaseClient();
+
+  try {
+    if (token !== undefined) {
+      const coordinationId = await coordinationIdByToken(supabase, token);
+      const coordination = coordinationId ? await fetchCoordination(supabase, coordinationId) : null;
+      if (!coordination) {
+        return sendJson(res, 404, { error: '日程調整が見つかりません' });
+      }
+      const [withToken] = await withShareTokens(supabase, [coordination]);
+      return sendJson(res, 200, withToken);
+    }
+
+    if (id !== undefined) {
+      if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+        return sendJson(res, 400, { error: 'IDの形式が正しくありません' });
+      }
+      const coordination = await fetchCoordination(supabase, id);
+      if (!coordination) {
+        return sendJson(res, 404, { error: '日程調整が見つかりません' });
+      }
+      if (coordination.is_blind) {
+        const regionOf = await regionResolverFor(actor);
+        const responded = await respondedCoordinationIds(supabase, actor.user.id, [coordination.id]);
+        if (!canViewCoordination(actor, coordination, regionOf, responded)) {
+          return sendJson(res, 404, { error: '日程調整が見つかりません' });
+        }
+      }
+      const [withToken] = await withShareTokens(supabase, [coordination]);
+      return sendJson(res, 200, withToken);
+    }
+
+    if (!BRANCHES.includes(branch)) {
+      return sendJson(res, 400, { error: '支部が不正です' });
+    }
+    const { data, error } = await supabase
+      .from('coordinations')
+      .select(COORDINATION_SELECT)
+      .eq('branch', branch)
+      .eq('is_blind', true)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const blind = data || [];
+    const regionOf = await regionResolverFor(actor);
+    const responded = await respondedCoordinationIds(supabase, actor.user.id, blind.map((c) => c.id));
+    const visible = blind.filter((c) => canViewCoordination(actor, c, regionOf, responded));
+    return sendJson(res, 200, await withShareTokens(supabase, visible));
+  } catch (err) {
+    console.error('coordinations GET failed:', err);
+    return sendJson(res, 500, { error: '日程調整の取得に失敗しました。時間をおいて再度お試しください' });
+  }
+}
+
+// ブラインドの指定の入力チェック（作成と編集で共通）。
+// 返り値: { value }（true/false）か { error }。送られていない（undefined）ときは { keep: true }
+function parseIsBlind(isBlind) {
+  if (isBlind === undefined) return { keep: true };
+  if (typeof isBlind !== 'boolean') return { error: 'ブラインドの指定が正しくありません' };
+  return { value: isBlind };
+}
 
 // 題名・場所・内容・回答締切の入力チェック（作成と編集で共通）
 function validateCoordinationFields({ title, place, content, reply_deadline }) {
@@ -183,15 +283,16 @@ function validateCandidates(candidates, { allowId }) {
 }
 
 // POST /api/coordinations : 日程調整の新規作成（一般ユーザー・管理者どちらも可）
-//   body: { branch, title, place, content, reply_deadline?, audience?, candidates: [{date, time?, note?}] }
+//   body: { branch, title, place, content, reply_deadline?, audience?, is_blind?, candidates: [{date, time?, note?}] }
 //   作成者名はログインしている人の表示名（送られた created_by は使わない）
 //   範囲（audience）を入れたときは、その支部の範囲の候補として自動で覚える（失敗しても作成は成功扱い）
+//   is_blind: true ならブラインド（省略時は通常）。共有トークンはDBのトリガーが自動で作る（migration 0023）
 //   coordinations 1行 + coordination_candidates 複数行をまとめて作成する。
 //   候補作成に失敗した場合は、coordinations側も削除して中途半端な行を残さない
 //   （1回のAPI呼び出しで2テーブルへの書き込みが必要だが、DB関数は使わず
 //   コンペンセーティングアクション＝失敗時の後始末で対応している）
 async function handleCreate(req, res) {
-  const { branch, title, place, content, reply_deadline, audience, candidates } = req.body || {};
+  const { branch, title, place, content, reply_deadline, audience, is_blind, candidates } = req.body || {};
   const auth = await resolveActor(req);
   if (!auth.ok) {
     return sendJson(res, auth.status, { error: auth.error });
@@ -212,6 +313,10 @@ async function handleCreate(req, res) {
     return sendJson(res, 400, { error: audienceResult.error });
   }
   const audienceValue = audienceResult.keep ? null : audienceResult.value;
+  const blindResult = parseIsBlind(is_blind);
+  if (blindResult.error) {
+    return sendJson(res, 400, { error: blindResult.error });
+  }
 
   const candidateResult = validateCandidates(candidates, { allowId: false });
   if (candidateResult.error) {
@@ -232,6 +337,7 @@ async function handleCreate(req, res) {
       created_by_user_id: writerId(actor),
       reply_deadline: trimmedDeadline || null,
       audience: audienceValue,
+      is_blind: blindResult.keep ? false : blindResult.value,
     })
     .select()
     .single();
@@ -274,15 +380,16 @@ async function handleCreate(req, res) {
 }
 
 // PUT /api/coordinations?id=xxx : 日程調整の編集（作成者本人 or 管理者のみ。調整中のときだけ）
-//   body: { title, place, content, reply_deadline?, audience?, candidates: [{id?, date, time?, note?}] }
+//   body: { title, place, content, reply_deadline?, audience?, is_blind?, candidates: [{id?, date, time?, note?}] }
 //   作成者名は変更しない（作成者のユーザーIDで本人判定する）。
+//   is_blind: 通常⇔ブラインドの切り替え。送られていなければ今のまま（トークンは切り替えても変わらない）。
 //   範囲（audience）: 空なら範囲なし。送られていなければ今の値を残す。今の値から変えたときだけ候補として覚える
 //   （変えなければ候補に入れない。候補管理で消した範囲が、そのままの保存で戻らないようにするため。備品の品名と同じ）。
 //   候補は、既存の候補ならidを付けて渡す（idの無いものは新規追加、渡されなかった既存の候補は削除）。
 //   調整本体と候補の更新は、DB関数 update_coordination が1トランザクションで行う
 //   （行ロックにより決定処理と同時には走らない。決定済みならP0001で止まる）
 async function handleUpdate(req, res, id) {
-  const { title, place, content, reply_deadline, audience, candidates } = req.body || {};
+  const { title, place, content, reply_deadline, audience, is_blind, candidates } = req.body || {};
   const auth = await resolveActor(req);
   if (!auth.ok) {
     return sendJson(res, auth.status, { error: auth.error });
@@ -324,6 +431,10 @@ async function handleUpdate(req, res, id) {
     return sendJson(res, 400, { error: audienceResult.error });
   }
   const audienceValue = audienceResult.keep ? existing.audience : audienceResult.value;
+  const blindResult = parseIsBlind(is_blind);
+  if (blindResult.error) {
+    return sendJson(res, 400, { error: blindResult.error });
+  }
 
   const { error } = await supabase.rpc('update_coordination', {
     p_coordination_id: id,
@@ -333,6 +444,7 @@ async function handleUpdate(req, res, id) {
     p_reply_deadline: fields.trimmedDeadline || null,
     p_candidates: candidateResult.normalized,
     p_audience: audienceValue,
+    p_is_blind: blindResult.keep ? null : blindResult.value, // null なら今のまま
   });
   if (error) {
     const { status, message } = updateErrorResponse(error);

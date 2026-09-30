@@ -2,6 +2,7 @@ const { getSupabaseClient } = require('./_lib/supabase');
 const { resolveActor } = require('./_lib/auth');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { regionResolverFor, canActOnRow } = require('./_lib/permissions');
+const { respondedCoordinationIds, canViewCoordination, coordinationIdByToken } = require('./_lib/coordinationAccess');
 
 const MARKS = ['yes', 'maybe', 'no'];
 const COMMENT_MAX_LENGTH = 200;
@@ -39,6 +40,9 @@ function responseErrorResponse(error) {
 //   registered_by は表示名、registered_by_user_id は自分（送られた registered_by は使わない）
 // DELETE /api/coordination-responses : 回答の取り消し（本人・代理登録した人、またはその支部を管理できる管理者）
 //   body: { coordination_id, participant_name }
+// ブラインドの調整（migration 0023）には、正しいトークン（body.token）を送った人か、見てよい人
+// （作成者本人・その支部を管理できる管理者・回答した人。api/_lib/coordinationAccess.js）だけが回答・取消できる。
+// それ以外は404（ブラインドの調整があることも伝えない）。
 // 登録・編集・取消はどれも、調整中(status='open')のときだけ受け付ける（決定済みは409）。
 // ※状態の確認と書き込みの間に決定された場合は、その回答が決定済みの調整に残りうる
 //   （数十〜数百ミリ秒の間だけ。データは壊れない。DBトリガーでの厳密な防止は入れていない）
@@ -61,7 +65,7 @@ module.exports = async (req, res) => {
   if (req.method === 'POST' || req.method === 'DELETE') {
     const { data, error: coordinationError } = await supabase
       .from('coordinations')
-      .select('status, branch')
+      .select('id, status, branch, is_blind, created_by_user_id')
       .eq('id', coordination_id)
       .maybeSingle();
     coordination = data;
@@ -72,10 +76,29 @@ module.exports = async (req, res) => {
     if (!coordination) {
       return sendJson(res, 404, { error: '指定された日程調整が見つかりません' });
     }
+    regionOf = await regionResolverFor(actor);
+    if (coordination.is_blind) {
+      let allowed = false;
+      try {
+        allowed =
+          (req.body.token !== undefined && (await coordinationIdByToken(supabase, req.body.token)) === coordination.id) ||
+          canViewCoordination(
+            actor,
+            coordination,
+            regionOf,
+            await respondedCoordinationIds(supabase, actor.user.id, [coordination.id])
+          );
+      } catch (err) {
+        const { status, message } = responseErrorResponse(err);
+        return sendJson(res, status, { error: message });
+      }
+      if (!allowed) {
+        return sendJson(res, 404, { error: '指定された日程調整が見つかりません' });
+      }
+    }
     if (coordination.status !== 'open') {
       return sendJson(res, 409, { error: 'この日程調整は決定済みのため、回答できません。' });
     }
-    regionOf = await regionResolverFor(actor);
   }
 
   if (req.method === 'POST') {
