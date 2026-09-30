@@ -3,6 +3,7 @@ const { resolveActor } = require('./_lib/auth');
 const { regionResolverFor, canActOnRow, writerName, writerId } = require('./_lib/permissions');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
+const { addBranchOption } = require('./_lib/branchOptions');
 
 const MAX_CANDIDATES = 30;
 // 候補日の最低件数と、その不足時の文言（js/coordination.js の MIN_CANDIDATES / 文言と完全に一致させること）
@@ -11,6 +12,8 @@ const MIN_CANDIDATES_MESSAGE =
   '日程調整は候補日を2つ以上入れてください。日にちが決まっている場合は、スケジュール画面から予定として登録してください。';
 const CANDIDATE_NOTE_MAX_LENGTH = 50;
 const CATEGORY_MAX_LENGTH = 50;
+// 参加できる人の範囲（任意。migration 0022 の coordinations_audience_check と同じ上限）
+const AUDIENCE_MAX_LENGTH = 50;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Vercel Hobbyプランのサーバーレス関数数上限（12個）を超えないよう、
@@ -107,6 +110,21 @@ function validateCoordinationFields({ title, place, content, reply_deadline }) {
   return { trimmedTitle, trimmedPlace, trimmedContent, trimmedDeadline };
 }
 
+// 範囲の入力チェック（作成と編集で共通）。前後の空白を除いて50文字以内、空なら null（範囲なし）。
+// 返り値: { value } か { error }。audience が送られていない（undefined）ときは { keep: true }
+// （編集では今の値をそのまま残す。範囲の欄が無い古い画面から保存しても、範囲が消えないようにするため）
+function parseAudience(audience) {
+  if (audience === undefined) return { keep: true };
+  if (audience !== null && typeof audience !== 'string') {
+    return { error: '範囲の形式が正しくありません' };
+  }
+  const value = (audience || '').trim();
+  if ([...value].length > AUDIENCE_MAX_LENGTH) {
+    return { error: `範囲は${AUDIENCE_MAX_LENGTH}文字以内で入力してください` };
+  }
+  return { value: value || null };
+}
+
 // 候補日時の入力チェック（作成と編集で共通）。
 //   ・候補は2つ以上（日付が入った候補を「日付|時刻」でまとめて数える。補足だけ違う同じ日時は1件）
 //   ・30件以内、日付は必須、同じ日時の重複なし、補足は50文字以内
@@ -165,14 +183,15 @@ function validateCandidates(candidates, { allowId }) {
 }
 
 // POST /api/coordinations : 日程調整の新規作成（一般ユーザー・管理者どちらも可）
-//   body: { branch, title, place, content, reply_deadline?, candidates: [{date, time?, note?}] }
+//   body: { branch, title, place, content, reply_deadline?, audience?, candidates: [{date, time?, note?}] }
 //   作成者名はログインしている人の表示名（送られた created_by は使わない）
+//   範囲（audience）を入れたときは、その支部の範囲の候補として自動で覚える（失敗しても作成は成功扱い）
 //   coordinations 1行 + coordination_candidates 複数行をまとめて作成する。
 //   候補作成に失敗した場合は、coordinations側も削除して中途半端な行を残さない
 //   （1回のAPI呼び出しで2テーブルへの書き込みが必要だが、DB関数は使わず
 //   コンペンセーティングアクション＝失敗時の後始末で対応している）
 async function handleCreate(req, res) {
-  const { branch, title, place, content, reply_deadline, candidates } = req.body || {};
+  const { branch, title, place, content, reply_deadline, audience, candidates } = req.body || {};
   const auth = await resolveActor(req);
   if (!auth.ok) {
     return sendJson(res, auth.status, { error: auth.error });
@@ -188,6 +207,11 @@ async function handleCreate(req, res) {
     return sendJson(res, 400, { error: fields.error || '必須項目が不足しています' });
   }
   const { trimmedTitle, trimmedPlace, trimmedContent, trimmedDeadline } = fields;
+  const audienceResult = parseAudience(audience);
+  if (audienceResult.error) {
+    return sendJson(res, 400, { error: audienceResult.error });
+  }
+  const audienceValue = audienceResult.keep ? null : audienceResult.value;
 
   const candidateResult = validateCandidates(candidates, { allowId: false });
   if (candidateResult.error) {
@@ -207,6 +231,7 @@ async function handleCreate(req, res) {
       created_by: trimmedCreatedBy,
       created_by_user_id: writerId(actor),
       reply_deadline: trimmedDeadline || null,
+      audience: audienceValue,
     })
     .select()
     .single();
@@ -240,17 +265,24 @@ async function handleCreate(req, res) {
     return sendJson(res, status, { error: message });
   }
 
+  // 範囲を支部の候補として自動保存（失敗しても作成自体は成功扱い。予定の場所と同じ）
+  if (audienceValue) {
+    await addBranchOption(supabase, { branch, type: 'audience', value: audienceValue });
+  }
+
   return sendJson(res, 201, { ...coordination, coordination_candidates: candidateRows });
 }
 
 // PUT /api/coordinations?id=xxx : 日程調整の編集（作成者本人 or 管理者のみ。調整中のときだけ）
-//   body: { title, place, content, reply_deadline?, candidates: [{id?, date, time?, note?}] }
+//   body: { title, place, content, reply_deadline?, audience?, candidates: [{id?, date, time?, note?}] }
 //   作成者名は変更しない（作成者のユーザーIDで本人判定する）。
+//   範囲（audience）: 空なら範囲なし。送られていなければ今の値を残す。今の値から変えたときだけ候補として覚える
+//   （変えなければ候補に入れない。候補管理で消した範囲が、そのままの保存で戻らないようにするため。備品の品名と同じ）。
 //   候補は、既存の候補ならidを付けて渡す（idの無いものは新規追加、渡されなかった既存の候補は削除）。
 //   調整本体と候補の更新は、DB関数 update_coordination が1トランザクションで行う
 //   （行ロックにより決定処理と同時には走らない。決定済みならP0001で止まる）
 async function handleUpdate(req, res, id) {
-  const { title, place, content, reply_deadline, candidates } = req.body || {};
+  const { title, place, content, reply_deadline, audience, candidates } = req.body || {};
   const auth = await resolveActor(req);
   if (!auth.ok) {
     return sendJson(res, auth.status, { error: auth.error });
@@ -264,7 +296,7 @@ async function handleUpdate(req, res, id) {
 
   const { data: existing, error: fetchError } = await supabase
     .from('coordinations')
-    .select('branch, created_by_user_id, status')
+    .select('branch, created_by_user_id, status, audience')
     .eq('id', id)
     .maybeSingle();
   if (fetchError || !existing) {
@@ -287,6 +319,11 @@ async function handleUpdate(req, res, id) {
   if (candidateResult.error) {
     return sendJson(res, 400, { error: candidateResult.error });
   }
+  const audienceResult = parseAudience(audience);
+  if (audienceResult.error) {
+    return sendJson(res, 400, { error: audienceResult.error });
+  }
+  const audienceValue = audienceResult.keep ? existing.audience : audienceResult.value;
 
   const { error } = await supabase.rpc('update_coordination', {
     p_coordination_id: id,
@@ -295,10 +332,16 @@ async function handleUpdate(req, res, id) {
     p_content: fields.trimmedContent,
     p_reply_deadline: fields.trimmedDeadline || null,
     p_candidates: candidateResult.normalized,
+    p_audience: audienceValue,
   });
   if (error) {
     const { status, message } = updateErrorResponse(error);
     return sendJson(res, status, { error: message });
+  }
+
+  // 範囲を今の値から変えたときだけ、支部の候補として覚える（失敗しても編集自体は成功扱い）
+  if (audienceValue && audienceValue !== existing.audience) {
+    await addBranchOption(supabase, { branch: existing.branch, type: 'audience', value: audienceValue });
   }
   return sendJson(res, 200, { id });
 }

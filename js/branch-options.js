@@ -13,7 +13,7 @@ import {
   regionBranchesOf,
 } from './auth.js';
 
-const TYPE_LABELS = { place: '場所候補', category: 'カテゴリ候補' };
+const TYPE_LABELS = { place: '場所候補', category: 'カテゴリ候補', audience: '範囲候補' };
 
 const state = {
   role: null,
@@ -37,6 +37,7 @@ const els = {
   branchOptionsContent: document.getElementById('branch-options-content'),
   placeOptionsList: document.getElementById('place-options-list'),
   categoryOptionsList: document.getElementById('category-options-list'),
+  audienceOptionsList: document.getElementById('audience-options-list'),
   equipmentOptionsPanel: document.getElementById('equipment-options-panel'),
   equipmentOptionsList: document.getElementById('equipment-options-list'),
 };
@@ -130,6 +131,7 @@ async function refreshLists() {
   await Promise.all([
     renderOptionList('place', els.placeOptionsList),
     renderOptionList('category', els.categoryOptionsList),
+    renderOptionList('audience', els.audienceOptionsList),
   ]);
 }
 

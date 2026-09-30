@@ -1,6 +1,8 @@
+// audience: 日程調整の「参加できる人の範囲」の候補（migration 0022）。日程調整の作成・編集で api/coordinations.js が自動で覚える
 const TABLES = {
   place: 'branch_place_options',
   category: 'branch_category_options',
+  audience: 'branch_audience_options',
 };
 
 // 備品の品名・種類の候補（全支部共通。migration 0021）

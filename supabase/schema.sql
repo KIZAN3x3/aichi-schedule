@@ -406,13 +406,17 @@ grant execute on function public.decide_coordination to service_role;
 -- 日付か時刻が変わった候補は削除して作り直す（回答は消える）。補足・並び順だけの変更なら回答は残る。
 -- id付きで渡された候補がこの調整に無い場合は、ほかの人の編集と衝突したとしてP0004で中止する。
 -- 権限（作成者本人かマスター管理者か）の判定はAPIレイヤーの責務（decide_coordinationと同じ）
+-- p_audience（migration 0022で追加）: 参加できる人の範囲（null＝範囲なし。APIが今の値を残すときは今の値を渡す）
+-- ※ coordinations.audience 列はこのファイルの末尾（migration 0022 の節）で追加している
+--   （plpgsql の本体は実行時に解釈されるため、関数を先に作っても問題ない）
 create or replace function public.update_coordination(
   p_coordination_id uuid,
   p_title           text,
   p_place           text,
   p_content         text,
   p_reply_deadline  date,
-  p_candidates      jsonb   -- [{ "id"?: uuid, "date": "YYYY-MM-DD", "time"?: "HH:MM", "note"?: text }, ...]（表示順）
+  p_candidates      jsonb,  -- [{ "id"?: uuid, "date": "YYYY-MM-DD", "time"?: "HH:MM", "note"?: text }, ...]（表示順）
+  p_audience        text default null
 ) returns void
 language plpgsql
 as $$
@@ -426,11 +430,15 @@ declare
   v_keys     text[] := '{}';
   v_kept_ids uuid[] := '{}';
   v_existing record;
+  v_audience text := nullif(btrim(coalesce(p_audience, ''), E' \t\r\n　'), '');
 begin
   if p_title is null or btrim(p_title) = ''
      or p_place is null or btrim(p_place) = ''
      or p_content is null or btrim(p_content) = '' then
     raise exception '必須項目が不足しています' using errcode = 'P0003';
+  end if;
+  if v_audience is not null and char_length(v_audience) > 50 then
+    raise exception '範囲は50文字以内で入力してください' using errcode = 'P0003';
   end if;
 
   -- 対象の調整をロックしつつ、調整中であることを確認（決定処理と同時に走らないようにする）
@@ -548,7 +556,8 @@ begin
   set title          = btrim(p_title),
       place          = btrim(p_place),
       content        = btrim(p_content),
-      reply_deadline = p_reply_deadline
+      reply_deadline = p_reply_deadline,
+      audience       = v_audience
   where id = p_coordination_id;
 end;
 $$;
@@ -779,3 +788,51 @@ alter table public.equipment_item_kind_options enable row level security;
 create policy "equipment_item_name_options_select_anon" on public.equipment_item_name_options for select using (true);
 create policy "equipment_item_kind_options_select_anon" on public.equipment_item_kind_options for select using (true);
 
+
+-- ============================================================
+-- 日程調整の「参加できる人の範囲」と、その候補（migration 0022 と同一内容。update_coordination の p_audience は上の関数に反映済み）
+-- 範囲は任意（既存行は null＝範囲なし）。候補は支部ごと（branch_place_options と同じ形）で、初期候補4つを18支部に入れる。
+-- 日程調整の作成・編集で入れた範囲は API が自動で覚える。読み取りは anon にも許可、書き込みは API（service_role）だけ
+-- ※ btrim の文字集合 E' \t\r\n　' の末尾は全角スペース(U+3000)の実文字
+-- ============================================================
+alter table public.coordinations
+  add column if not exists audience text
+    constraint coordinations_audience_check check (
+      audience is null or (audience = btrim(audience, E' \t\r\n　') and char_length(audience) between 1 and 50)
+    );
+
+comment on column public.coordinations.audience is '参加できる人の範囲（任意。例：支部役員のみ）。既存行はnull（範囲なし）';
+
+create table if not exists public.branch_audience_options (
+  id         uuid primary key default gen_random_uuid(),
+  branch     text not null
+               constraint branch_audience_options_branch_check check (
+                 branch in (
+                   '西県連','東県連',
+                   '1支部','2支部','3支部','4支部','5支部','6支部','7支部','8支部',
+                   '9支部','10支部','11支部','12支部','13支部','14支部','15支部','16支部'
+                 )
+               ),
+  value      text not null
+               constraint branch_audience_options_value_check check (
+                 value = btrim(value, E' \t\r\n　') and char_length(value) between 1 and 50
+               ),
+  created_at timestamptz not null default now(),
+  constraint branch_audience_options_branch_value_key unique (branch, value)
+);
+
+comment on table public.branch_audience_options is '支部ごとの日程調整の「参加できる人の範囲」の候補（プルダウン用）。作成・編集で入れた範囲を自動で覚える';
+
+alter table public.branch_audience_options enable row level security;
+
+create policy "branch_audience_options_select_anon" on public.branch_audience_options for select using (true);
+
+insert into public.branch_audience_options (branch, value)
+select b.branch, v.value
+from (values
+  ('西県連'), ('東県連'),
+  ('1支部'), ('2支部'), ('3支部'), ('4支部'), ('5支部'), ('6支部'), ('7支部'), ('8支部'),
+  ('9支部'), ('10支部'), ('11支部'), ('12支部'), ('13支部'), ('14支部'), ('15支部'), ('16支部')
+) as b(branch)
+cross join (values ('県連役員'), ('支部長'), ('支部役員のみ'), ('支部全員')) as v(value)
+on conflict (branch, value) do nothing;

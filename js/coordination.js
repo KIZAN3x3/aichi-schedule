@@ -3,6 +3,7 @@ import { getSupabaseClient } from './supabase-client.js';
 import { CATEGORY_OPTIONS, OTHER_CATEGORY } from './categories.js';
 import { formatDateWithWeekday } from './date-utils.js';
 import { replaceChatworkBrackets, chatworkInfo, createShareActions as createCopyButtons } from './share.js';
+import { createOptionPicker } from './equipment-options.js';
 import {
   getAuthHeaders,
   redirectToLogin,
@@ -53,6 +54,9 @@ const api = {
     request(`/api/coordinations?id=${encodeURIComponent(id)}&action=decide`, 'POST', payload),
   submitResponse: (payload) => request('/api/coordination-responses', 'POST', payload),
   deleteResponse: (payload) => request('/api/coordination-responses', 'DELETE', payload),
+  // 支部ごとの「参加できる人の範囲」の候補（migration 0022）。[{ id, value }]
+  getAudienceOptions: (branch) =>
+    request(`/api/branch-options?branch=${encodeURIComponent(branch)}&type=audience`, 'GET'),
 };
 
 // coordinationsとcoordination_candidatesの間には外部キーが2本ある
@@ -80,6 +84,9 @@ const state = {
   pendingScroll: null, // { id, requireStatus }
   endedGroupOpen: false, // 「終わった日程調整」グループの開閉（Realtimeでの再描画をまたいで保持する）
   googleUser: null, // ログインしている利用者（app_usersの行）
+  audienceOptions: [], // 選んでいる支部の「参加できる人の範囲」の候補（値の配列）
+  createAudiencePicker: null, // 作成フォームの範囲の入力欄（選択肢＋新しく入力）
+  editAudiencePicker: null, // 編集ダイアログの範囲の入力欄
 };
 
 const els = {
@@ -100,12 +107,14 @@ const els = {
   coordinationPlace: document.getElementById('coordination-place'),
   coordinationContent: document.getElementById('coordination-content'),
   coordinationDeadline: document.getElementById('coordination-deadline'),
+  coordinationAudiencePicker: document.getElementById('coordination-audience-picker'),
   coordinationCreatedBy: document.getElementById('coordination-created-by'),
   coordinationFormError: document.getElementById('coordination-form-error'),
   coordinationList: document.getElementById('coordination-list'),
   answerDialog: document.getElementById('answer-dialog'),
   answerForm: document.getElementById('answer-form'),
   answerDialogTitle: document.getElementById('answer-dialog-title'),
+  answerAudience: document.getElementById('answer-audience'),
   answerName: document.getElementById('answer-name'),
   answerProxyNote: document.getElementById('answer-proxy-note'),
   answerCandidatesList: document.getElementById('answer-candidates-list'),
@@ -138,6 +147,7 @@ const els = {
   editPlace: document.getElementById('edit-place'),
   editContent: document.getElementById('edit-content'),
   editDeadline: document.getElementById('edit-deadline'),
+  editAudiencePicker: document.getElementById('edit-audience-picker'),
   editError: document.getElementById('edit-error'),
   editSubmit: document.getElementById('edit-submit'),
   editCancel: document.getElementById('edit-cancel'),
@@ -154,6 +164,7 @@ async function init() {
   populateBranchOptions();
   populateCategorySelect();
   bindCategoryToggle();
+  setupAudiencePickers();
   bindStaticEvents();
   setupGoogleLogin();
   bindCoordinationForm();
@@ -189,6 +200,42 @@ function bindCategoryToggle() {
   });
 }
 
+// 「参加できる人の範囲」の入力欄（選択肢＋新しく入力。備品の品名と同じ部品）を作成フォームと編集ダイアログに置く
+function setupAudiencePickers() {
+  const options = {
+    blankLabel: '指定なし',
+    newLabel: '＋ 新しい範囲を入力',
+    inputPlaceholder: '例：支部役員のみ',
+    currentSuffix: '（今の範囲）',
+    ariaLabel: '参加できる人の範囲',
+  };
+  state.createAudiencePicker = createOptionPicker(options);
+  state.editAudiencePicker = createOptionPicker(options);
+  els.coordinationAudiencePicker.appendChild(state.createAudiencePicker.el);
+  els.editAudiencePicker.appendChild(state.editAudiencePicker.el);
+  state.createAudiencePicker.setChoices([], null);
+  state.editAudiencePicker.setChoices([], null);
+}
+
+// 選んでいる支部の範囲の候補を読み込み、作成フォームの選択肢を入れ替える（選んでいた値はできるだけ保つ）。
+// 編集ダイアログは、開くときにこの候補で作り直す（開いている間は入れ替えない。「（今の範囲）」の選択を保つため）。
+// 読み込めなくても作成・編集はできる（選択肢が「指定なし」と「新しく入力」だけになる）
+async function loadAudienceOptions() {
+  const branch = state.branch;
+  let values = [];
+  if (branch) {
+    try {
+      const rows = await api.getAudienceOptions(branch);
+      values = (rows || []).map((row) => row.value);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+  if (branch !== state.branch) return; // 読み込み中に支部が変わった
+  state.audienceOptions = values;
+  state.createAudiencePicker.setChoices(values);
+}
+
 function bindStaticEvents() {
   els.logoutBtn.addEventListener('click', handleLogout);
 
@@ -201,6 +248,7 @@ function bindStaticEvents() {
     state.pendingScroll = null;
     state.endedGroupOpen = false;
     refreshList();
+    loadAudienceOptions();
     subscribeRealtime();
   });
 
@@ -274,6 +322,7 @@ async function boot() {
   } else {
     await refreshList();
   }
+  loadAudienceOptions(); // ?id=で支部が切り替わった場合もあるため、支部が決まってから読む
   subscribeRealtime();
 }
 
@@ -555,7 +604,10 @@ function buildChatworkText(coordination) {
   const deadlineLine = coordination.reply_deadline
     ? `回答締切: ${formatDateWithWeekday(coordination.reply_deadline)}`
     : '回答締切: なし';
+  // 範囲（自由入力もあるため [ ] を全角にする）。範囲なしなら行ごと省く
+  const audienceLines = coordination.audience ? [`範囲: ${replaceChatworkBrackets(coordination.audience)}`] : [];
   return chatworkInfo(`${coordination.title}（日程調整）`, [
+    ...audienceLines,
     '候補日:',
     ...candidateLines,
     deadlineLine,
@@ -658,6 +710,15 @@ function createCoordinationCard(coordination) {
   created.textContent = `${formatCreatedMonthDay(coordination.created_at)}作成`;
   metaRow.appendChild(created);
 
+  // 範囲は閉じた状態でも見えるよう、バッジの左に出す（長い範囲は省略し、全文はtitleで出す）
+  if (coordination.audience) {
+    const audience = document.createElement('span');
+    audience.className = 'coordination-audience-chip';
+    audience.textContent = `範囲：${coordination.audience}`;
+    audience.title = `参加できる人の範囲：${coordination.audience}`;
+    metaRow.appendChild(audience);
+  }
+
   const badge = document.createElement('span');
   badge.className = coordination.status === 'decided' ? 'finished-badge' : 'coordination-status-open';
   badge.textContent = coordination.status === 'decided' ? '決定済み' : '調整中';
@@ -679,6 +740,13 @@ function createCoordinationCard(coordination) {
   meta.className = 'coordination-meta';
   meta.textContent = `${coordination.branch} ・ 場所: ${coordination.place}`;
   body.appendChild(meta);
+
+  if (coordination.audience) {
+    const audience = document.createElement('p');
+    audience.className = 'coordination-audience';
+    audience.textContent = `参加できる人の範囲: ${coordination.audience}`;
+    body.appendChild(audience);
+  }
 
   const content = document.createElement('p');
   content.className = 'event-content';
@@ -1081,6 +1149,8 @@ function hasEnoughCandidates(candidates) {
 
 function resetCoordinationForm() {
   els.coordinationForm.reset();
+  state.createAudiencePicker.reset();
+  state.createAudiencePicker.setChoices(state.audienceOptions, null);
   els.coordinationCandidatesList.innerHTML = '';
   els.coordinationCandidatesList.appendChild(createCandidateRow());
   els.coordinationCandidatesList.appendChild(createCandidateRow());
@@ -1119,8 +1189,10 @@ async function handleCreateCoordination(event) {
       place: els.coordinationPlace.value.trim(),
       content: els.coordinationContent.value.trim(),
       reply_deadline: els.coordinationDeadline.value || undefined,
+      audience: state.createAudiencePicker.getValue(), // 空なら範囲なし
       candidates,
     });
+    loadAudienceOptions(); // 新しく入力した範囲は候補に入るため読み直す
     els.coordinationForm.classList.add('hidden');
     els.newCoordinationToggleBtn.textContent = '＋ 日程調整を作成';
     // 作成した本人の画面だけ、作った調整を開いた状態で表示する
@@ -1177,6 +1249,8 @@ function openAnswerDialog(coordination, editingResponse) {
   answerDialogCtx = { coordinationId: coordination.id, coordination, editingResponse };
 
   els.answerDialogTitle.textContent = editingResponse ? '回答を編集' : '回答する';
+  els.answerAudience.textContent = coordination.audience ? `参加できる人の範囲：${coordination.audience}` : '';
+  els.answerAudience.classList.toggle('hidden', !coordination.audience);
   els.answerName.value = editingResponse ? editingResponse.participant_name : state.myName;
   els.answerName.readOnly = Boolean(editingResponse);
   els.answerComment.value = editingResponse?.comment || '';
@@ -1334,6 +1408,9 @@ function openEditDialog(coordination) {
   els.editPlace.value = coordination.place;
   els.editContent.value = coordination.content;
   els.editDeadline.value = coordination.reply_deadline || '';
+  // 今の範囲が候補に無くても「〇〇（今の範囲）」として選んだ状態で出す（そのまま保存しても変わらない）
+  state.editAudiencePicker.reset();
+  state.editAudiencePicker.setChoices(state.audienceOptions, coordination.audience || null);
   els.editCandidatesList.innerHTML = '';
   for (const candidate of sortedCandidates(coordination)) {
     els.editCandidatesList.appendChild(createCandidateRow(candidate));
@@ -1418,8 +1495,10 @@ async function handleEditSubmit(event) {
       place: els.editPlace.value.trim(),
       content: els.editContent.value.trim(),
       reply_deadline: els.editDeadline.value || undefined,
+      audience: state.editAudiencePicker.getValue(), // 空なら範囲なし
       candidates,
     });
+    loadAudienceOptions(); // 範囲を変えた場合は候補に入るため読み直す
     state.accordionOpen.add(editDialogCtx.coordinationId);
     els.editDialog.close();
     await refreshList();

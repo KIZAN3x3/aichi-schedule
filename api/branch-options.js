@@ -5,7 +5,7 @@ const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 const { TABLES, EQUIPMENT_OPTION_TABLES, addBranchOption } = require('./_lib/branchOptions');
 
-// GET    /api/branch-options?branch=◯◯&type=place|category    : 支部ごとの過去入力候補を取得
+// GET    /api/branch-options?branch=◯◯&type=place|category|audience : 支部ごとの過去入力候補を取得（audience は日程調整の範囲）
 // POST   /api/branch-options { branch, type, value } : 候補を追加（重複はエラーにせず無視）
 // DELETE /api/branch-options { id, type }            : 候補を削除
 // 追加・削除は「入力候補の管理」の権限（その支部を管理できる管理者: システム管理者・その県連の県連管理者）。
@@ -29,7 +29,7 @@ module.exports = async (req, res) => {
     }
     const table = TABLES[type];
     if (!table) {
-      return sendJson(res, 400, { error: 'typeはplaceまたはcategoryを指定してください' });
+      return sendJson(res, 400, { error: 'typeはplace・category・audienceのどれかを指定してください' });
     }
 
     const supabase = getSupabaseClient();
@@ -58,7 +58,7 @@ module.exports = async (req, res) => {
       return sendJson(res, 403, { error: 'この支部の入力候補を管理できるのは、この支部を管理する管理者だけです' });
     }
     if (!TABLES[type]) {
-      return sendJson(res, 400, { error: 'typeはplaceまたはcategoryを指定してください' });
+      return sendJson(res, 400, { error: 'typeはplace・category・audienceのどれかを指定してください' });
     }
     const trimmedValue = typeof value === 'string' ? value.trim() : '';
     if (!trimmedValue) {
@@ -82,7 +82,7 @@ module.exports = async (req, res) => {
     }
     const table = TABLES[type];
     if (!table) {
-      return sendJson(res, 400, { error: 'typeはplaceまたはcategoryを指定してください' });
+      return sendJson(res, 400, { error: 'typeはplace・category・audienceのどれかを指定してください' });
     }
     if (!id) {
       return sendJson(res, 400, { error: 'idが必要です' });

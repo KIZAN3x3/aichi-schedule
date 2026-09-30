@@ -1768,6 +1768,26 @@ body {
   color: var(--text-muted);
 }
 
+/* 参加できる人の範囲（カード本文・回答ダイアログ） */
+.coordination-audience,
+.coordination-audience-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* 閉じたカードの2段目に出す範囲。長い範囲は省略し、作成日・バッジを押し出さない */
+.coordination-audience-chip {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .coordination-decided-info {
   display: flex;
   align-items: center;

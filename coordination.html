@@ -76,6 +76,10 @@
           内容
           <textarea id="coordination-content" placeholder="内容" required></textarea>
         </label>
+        <div class="form-field">
+          <span class="form-field-label">参加できる人の範囲（任意）</span>
+          <div id="coordination-audience-picker"></div>
+        </div>
         <label>
           回答締切（任意）
           <input type="date" id="coordination-deadline" />
@@ -94,6 +98,7 @@
 <dialog id="answer-dialog" class="csv-export-dialog">
   <form id="answer-form" class="csv-export-form">
     <h2 id="answer-dialog-title" class="csv-export-title">回答する</h2>
+    <p id="answer-audience" class="coordination-audience-note hidden"></p>
     <label>
       お名前
       <input type="text" id="answer-name" maxlength="50" />
@@ -142,6 +147,10 @@
       内容
       <textarea id="edit-content" required></textarea>
     </label>
+    <div class="form-field">
+      <span class="form-field-label">参加できる人の範囲（任意）</span>
+      <div id="edit-audience-picker"></div>
+    </div>
     <label>
       回答締切（任意）
       <input type="date" id="edit-deadline" />
