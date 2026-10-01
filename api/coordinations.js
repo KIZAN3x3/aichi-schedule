@@ -22,6 +22,16 @@ const CATEGORY_MAX_LENGTH = 50;
 // 参加できる人の範囲（任意。migration 0022 の coordinations_audience_check と同じ上限）
 const AUDIENCE_MAX_LENGTH = 50;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// 「日程調整で決まった予定」で返す件数の上限（これからの予定・終わった予定）。上限を超えた分は件数だけ返す
+const MY_PLANS_UPCOMING_MAX = 50;
+const MY_PLANS_PAST_MAX = 20;
+// 日本時間の今日（YYYY-MM-DD）。js/coordination.js の todayInTokyo と同じ考え方
+const tokyoDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 // Vercel Hobbyプランのサーバーレス関数数上限（12個）を超えないよう、
 // 元は3ファイルだった以下のエンドポイントをこの1ファイルにまとめている。
@@ -29,6 +39,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 //   GET    /api/coordinations?branch=xxx           : その支部のブラインドの調整のうち、見てよい人に当たるもの（migration 0023）
 //   GET    /api/coordinations?token=xxx            : トークンの調整1件（coordination.html?t= のリンク用）
 //   GET    /api/coordinations?id=xxx               : 1件（通常の調整か、見てよい人のときだけ）
+//   GET    /api/coordinations?view=my_plans        : 日程調整で決まった予定（自分が〇△で回答して決定済みになった調整。全支部分）
 //   POST   /api/coordinations                     : 新規作成（旧 api/coordinations.js）
 //   PUT    /api/coordinations?id=xxx               : 編集（調整中のときだけ。DB関数update_coordination）
 //   DELETE /api/coordinations?id=xxx               : 削除（旧 api/coordinations/[id].js）
@@ -135,7 +146,7 @@ async function fetchCoordination(supabase, id) {
 //                 通常の調整は返さない（画面が anon で直接読むため）
 //   見てよい人: 作成者本人・その支部を管理できる管理者（システム管理者・自県連の県連管理者）・回答した人（代理登録を含む）
 async function handleGet(req, res) {
-  const { branch, token, id } = req.query;
+  const { branch, token, id, view } = req.query;
   const auth = await resolveActor(req);
   if (!auth.ok) {
     return sendJson(res, auth.status, { error: auth.error });
@@ -144,6 +155,13 @@ async function handleGet(req, res) {
   const supabase = getSupabaseClient();
 
   try {
+    if (view !== undefined) {
+      if (view !== 'my_plans') {
+        return sendJson(res, 400, { error: 'viewの指定が正しくありません' });
+      }
+      return sendJson(res, 200, await loadMyPlans(supabase, actor.user.id));
+    }
+
     if (token !== undefined) {
       const coordinationId = await coordinationIdByToken(supabase, token);
       const coordination = coordinationId ? await fetchCoordination(supabase, coordinationId) : null;
@@ -192,6 +210,85 @@ async function handleGet(req, res) {
     console.error('coordinations GET failed:', err);
     return sendJson(res, 500, { error: '日程調整の取得に失敗しました。時間をおいて再度お試しください' });
   }
+}
+
+// GET ?view=my_plans : 日程調整で決まった予定（本人の分だけ。全支部・通常とブラインド・載せる／載せないの区別なし）
+//   対象: 本人の回答（participant_user_id が自分。代理登録した回答・移行前の名前だけの回答は含めない）がある、
+//         決定済みの調整のうち、決定した候補に〇（yes）か△（maybe）と答えたもの
+//   日付・時刻: スケジュールに載せた決定は予定（events）の日付・時刻（スケジュール画面で動かした場合も合わせる）、
+//               載せなかった決定は決定した候補の日付・時刻（時刻が空なら終日）
+//   返り値: { upcoming, upcoming_total, past, past_total }
+//     upcoming … 今日（日本時間）以降。日付・時刻の早い順。最大 MY_PLANS_UPCOMING_MAX 件
+//     past     … 今日より前（終わった予定）。新しい順。最大 MY_PLANS_PAST_MAX 件
+//     1件: { id, title, branch, place, is_blind, mark, date, time, end_time, note, event_id, share_token }
+//       event_id はスケジュールに載せたときだけ、share_token はブラインドのときだけ入る（本人は回答しているので見てよい人）。
+//       ほかの人の回答や名前は返さない
+async function loadMyPlans(supabase, userId) {
+  const empty = { upcoming: [], upcoming_total: 0, past: [], past_total: 0 };
+  const ids = [...(await respondedCoordinationIds(supabase, userId, null, { participantOnly: true }))];
+  if (ids.length === 0) return empty;
+
+  const { data, error } = await supabase
+    .from('coordinations')
+    .select(
+      'id, branch, title, place, is_blind, decided_candidate_id, decided_event_id, ' +
+        'coordination_candidates!coordination_candidates_coordination_id_fkey(id, date, time, note), ' +
+        'coordination_responses(participant_user_id, coordination_answers(candidate_id, mark)), ' +
+        'decided_event:events!coordinations_decided_event_id_fkey(date, time, end_time)'
+    )
+    .in('id', ids)
+    .eq('status', 'decided');
+  if (error) throw error;
+
+  const plans = [];
+  for (const c of data || []) {
+    // 本人の回答（表示名を変えた人は2行あることがあるため、〇があれば〇、なければ△）
+    const marks = (c.coordination_responses || [])
+      .filter((r) => r.participant_user_id === userId)
+      .flatMap((r) => r.coordination_answers || [])
+      .filter((a) => a.candidate_id === c.decided_candidate_id)
+      .map((a) => a.mark);
+    const mark = marks.includes('yes') ? 'yes' : marks.includes('maybe') ? 'maybe' : null;
+    if (!mark) continue;
+
+    const candidate = (c.coordination_candidates || []).find((x) => x.id === c.decided_candidate_id);
+    const event = c.decided_event_id ? c.decided_event : null;
+    const date = event ? event.date : candidate && candidate.date;
+    if (!date) continue; // 決定した候補が見つからない（通常は起きない）
+    plans.push({
+      id: c.id,
+      title: c.title,
+      branch: c.branch,
+      place: c.place,
+      is_blind: c.is_blind,
+      mark,
+      date,
+      time: event ? event.time : (candidate && candidate.time) || null,
+      end_time: event ? event.end_time : null,
+      note: event ? null : (candidate && candidate.note) || null,
+      event_id: c.decided_event_id || null,
+    });
+  }
+
+  const today = tokyoDateFormatter.format(new Date());
+  const key = (p) => `${p.date} ${p.time || ''}`;
+  const upcomingAll = plans.filter((p) => p.date >= today).sort((a, b) => key(a).localeCompare(key(b)));
+  const pastAll = plans.filter((p) => p.date < today).sort((a, b) => key(b).localeCompare(key(a)));
+  const upcoming = upcomingAll.slice(0, MY_PLANS_UPCOMING_MAX);
+  const past = pastAll.slice(0, MY_PLANS_PAST_MAX);
+
+  // ブラインドの調整には、開くためのトークンを付ける
+  const tokens = await shareTokensFor(
+    supabase,
+    [...upcoming, ...past].filter((p) => p.is_blind).map((p) => p.id)
+  );
+  const withToken = (p) => ({ ...p, share_token: p.is_blind ? tokens.get(p.id) || null : null });
+  return {
+    upcoming: upcoming.map(withToken),
+    upcoming_total: upcomingAll.length,
+    past: past.map(withToken),
+    past_total: pastAll.length,
+  };
 }
 
 // ブラインドの指定の入力チェック（作成と編集で共通）。

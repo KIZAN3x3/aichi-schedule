@@ -1832,6 +1832,82 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* 日程調整で決まった予定（日程調整画面の一番上）。
+   下の「支部を選択」「日程調整」の白い枠と区別するため、枠だけ薄いクリーム色にし、中のカードは白で浮かせる */
+.my-plans-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #fff1dc;
+  border-color: var(--border-strong);
+}
+
+.my-plans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.my-plan-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: 0 1px 3px rgba(43, 33, 25, 0.08);
+}
+
+.my-plan-date {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  font-weight: 700;
+  color: var(--orange-dark);
+}
+
+.my-plan-maybe-badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--text-muted);
+  color: #fff;
+  font-size: 12px;
+}
+
+.my-plan-title {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.my-plan-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.my-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.my-plans-past {
+  margin: 0;
+}
+
+.my-plans-past-summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
 /* 決定ダイアログ: スケジュールに載せる／載せないの選択と、予定の内容の枠（fieldset の枠線・余白を消し、フォームと同じ並びにする） */
 .decide-schedule-choice,
 .decide-schedule-fields {

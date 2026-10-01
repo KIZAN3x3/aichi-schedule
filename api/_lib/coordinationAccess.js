@@ -9,7 +9,8 @@ const { canManageBranch } = require('./permissions');
 //   トークン（coordination_share_tokens.token）を知っている人は、見てよい人でなくても見られ、回答できる。
 // 通常の調整（is_blind = false）は誰でも見てよい。
 // 一覧（api/coordinations.js の GET）・回答の受付（api/coordination-responses.js）で使う。
-// 「あなたの参加予定」（自分が回答した調整を全支部分出す欄）でも respondedCoordinationIds を使い回す想定
+// 「日程調整で決まった予定」（api/coordinations.js の GET ?view=my_plans。自分が回答して決定済みになった調整を
+// 全支部分出す欄）でも respondedCoordinationIds を使い回す（そちらは participantOnly で本人の回答だけ）
 
 const SHARE_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
 
@@ -21,13 +22,14 @@ const COORDINATION_SELECT =
 
 // 自分が回答した（本人として、または代理登録で）日程調整の id の Set。
 // coordinationIds を渡すと、その中だけを調べる（省略すると全支部の自分の回答すべて）
-async function respondedCoordinationIds(supabase, userId, coordinationIds = null) {
+// participantOnly: true なら、本人の回答（participant_user_id が自分）だけを数える（代理登録した回答は数えない）
+async function respondedCoordinationIds(supabase, userId, coordinationIds = null, { participantOnly = false } = {}) {
   if (!userId) return new Set();
   if (Array.isArray(coordinationIds) && coordinationIds.length === 0) return new Set();
-  let query = supabase
-    .from('coordination_responses')
-    .select('coordination_id')
-    .or(`participant_user_id.eq.${userId},registered_by_user_id.eq.${userId}`);
+  let query = supabase.from('coordination_responses').select('coordination_id');
+  query = participantOnly
+    ? query.eq('participant_user_id', userId)
+    : query.or(`participant_user_id.eq.${userId},registered_by_user_id.eq.${userId}`);
   if (coordinationIds) query = query.in('coordination_id', coordinationIds);
   const { data, error } = await query;
   if (error) throw error;

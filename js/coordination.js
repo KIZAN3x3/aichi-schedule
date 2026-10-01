@@ -65,6 +65,8 @@ const api = {
   getCoordinationById: (id) => request(`/api/coordinations?id=${encodeURIComponent(id)}`, 'GET'),
   // スケジュールに載せなかった決定の取り消し（調整中に戻す。migration 0024）
   reopenCoordination: (id) => request(`/api/coordinations?id=${encodeURIComponent(id)}&action=reopen`, 'POST', {}),
+  // 日程調整で決まった予定（自分が〇△で回答して決定済みになった調整。全支部分・本人の分だけ）
+  getMyPlans: () => request('/api/coordinations?view=my_plans', 'GET'),
   // 利用者の表示名（決定した人の「〇〇さんが決定」用）。[{ id, display_name }]
   getUserNames: (ids) => request(`/api/users?action=names&ids=${ids.map(encodeURIComponent).join(',')}`, 'GET'),
 };
@@ -102,6 +104,7 @@ const state = {
   shareToken: shareTokenFromUrl,
   // 決定した人（decided_by_user_id）→ 表示名。一度取った人は取り直さない（取れなかった人は null を入れて、次から聞かない）
   userNames: new Map(),
+  myPlansPastOpen: false, // 「終わった予定」の開閉（読み直しをまたいで保持する）
   audienceOptions: [], // 選んでいる支部の「参加できる人の範囲」の候補（値の配列）
   createAudiencePicker: null, // 作成フォームの範囲の入力欄（選択肢＋新しく入力）
   editAudiencePicker: null, // 編集ダイアログの範囲の入力欄
@@ -116,6 +119,11 @@ const els = {
   roleText: document.getElementById('role-text'),
   logoutBtn: document.getElementById('logout-btn'),
   nameDisplayValue: document.getElementById('name-display-value'),
+  myPlansPanel: document.getElementById('my-plans-panel'),
+  myPlansList: document.getElementById('my-plans-list'),
+  myPlansPast: document.getElementById('my-plans-past'),
+  myPlansPastSummary: document.getElementById('my-plans-past-summary'),
+  myPlansPastList: document.getElementById('my-plans-past-list'),
   branchSelect: document.getElementById('branch-select'),
   newCoordinationToggleBtn: document.getElementById('new-coordination-toggle-btn'),
   coordinationForm: document.getElementById('coordination-form'),
@@ -349,11 +357,124 @@ async function boot() {
     await refreshList();
   }
   loadAudienceOptions(); // ?id=で支部が切り替わった場合もあるため、支部が決まってから読む
+  loadMyPlans();
   subscribeRealtime();
-  // ブラインドの調整の変更は Realtime で届かない（RLSで見えないため）。画面に戻ったときに読み直して追いつく
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && state.branch) refreshList();
+  // ブラインドの調整の変更は Realtime で届かない（RLSで見えないため）。画面に戻ったときに読み直して追いつく。
+  // 日程調整で決まった予定も、ほかの人の決定（ほかの支部・ブラインド）は届かないため、ここで読み直す
+  els.myPlansPast.addEventListener('toggle', () => {
+    state.myPlansPastOpen = els.myPlansPast.open;
   });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (state.branch) refreshList();
+    loadMyPlans();
+  });
+}
+
+// ===================== 日程調整で決まった予定 =====================
+
+// 自分が〇△で回答して決定済みになった調整（全支部分・本人の分だけ）を API から読み、一番上の枠に出す。
+// 0件なら枠ごと出さない。読み込めなかったときも出さない（ほかの画面の動きには影響させない）
+async function loadMyPlans() {
+  let data;
+  try {
+    data = await api.getMyPlans();
+  } catch (err) {
+    console.error(err);
+    return;
+  }
+  renderMyPlans(data || {});
+}
+
+function renderMyPlans({ upcoming = [], upcoming_total = 0, past = [], past_total = 0 }) {
+  els.myPlansPanel.classList.toggle('hidden', upcoming_total === 0 && past_total === 0);
+
+  els.myPlansList.innerHTML = '';
+  if (upcoming.length === 0) {
+    els.myPlansList.appendChild(hintEl('これからの予定はありません'));
+  }
+  for (const plan of upcoming) els.myPlansList.appendChild(createMyPlanItem(plan));
+  if (upcoming_total > upcoming.length) {
+    els.myPlansList.appendChild(hintEl(`ほかに${upcoming_total - upcoming.length}件あります`));
+  }
+
+  els.myPlansPast.classList.toggle('hidden', past_total === 0);
+  els.myPlansPastSummary.textContent =
+    past_total > past.length
+      ? `終わった予定（全${past_total}件・新しい${past.length}件を表示）`
+      : `終わった予定（${past_total}件）`;
+  els.myPlansPastList.innerHTML = '';
+  for (const plan of past) els.myPlansPastList.appendChild(createMyPlanItem(plan));
+  els.myPlansPast.open = state.myPlansPastOpen;
+}
+
+// 1件: 日付・時刻（△・🔒のバッジ）／題名／支部・場所／導線
+//   スケジュールに載せた決定 … 「スケジュール画面で見る」（index.html?event=）
+//   どれも                    … 「日程調整を開く」（ブラインドは ?t=、通常は ?id=）
+function createMyPlanItem(plan) {
+  const item = document.createElement('article');
+  item.className = 'my-plan-item';
+
+  const dateRow = document.createElement('p');
+  dateRow.className = 'my-plan-date';
+  const dateText = document.createElement('span');
+  dateText.textContent = `${formatDateWithWeekday(plan.date)} ${myPlanTimeLabel(plan)}`;
+  dateRow.appendChild(dateText);
+  if (plan.mark === 'maybe') {
+    const maybe = document.createElement('span');
+    maybe.className = 'my-plan-maybe-badge';
+    maybe.textContent = '△';
+    maybe.title = '△（未定）で回答しています';
+    dateRow.appendChild(maybe);
+  }
+  if (plan.is_blind) {
+    const blind = document.createElement('span');
+    blind.className = 'coordination-blind-badge';
+    blind.textContent = '🔒 限定';
+    dateRow.appendChild(blind);
+  }
+  item.appendChild(dateRow);
+
+  const title = document.createElement('p');
+  title.className = 'my-plan-title';
+  title.textContent = plan.title;
+  item.appendChild(title);
+
+  const meta = document.createElement('p');
+  meta.className = 'my-plan-meta';
+  meta.textContent = plan.event_id
+    ? `${plan.branch} ・ 場所: ${plan.place}`
+    : `${plan.branch} ・ 場所: ${plan.place} ・ スケジュールには載せていません`;
+  item.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'my-plan-actions';
+  if (plan.event_id) {
+    const scheduleLink = document.createElement('a');
+    scheduleLink.href = `index.html?event=${encodeURIComponent(plan.event_id)}`;
+    scheduleLink.className = 'btn btn-outline btn-small';
+    scheduleLink.textContent = 'スケジュール画面で見る';
+    actions.appendChild(scheduleLink);
+  }
+  const openLink = document.createElement('a');
+  openLink.href =
+    plan.is_blind && plan.share_token
+      ? `coordination.html?t=${encodeURIComponent(plan.share_token)}`
+      : `coordination.html?id=${encodeURIComponent(plan.id)}`;
+  openLink.className = 'btn btn-outline btn-small';
+  openLink.textContent = '日程調整を開く';
+  actions.appendChild(openLink);
+  item.appendChild(actions);
+
+  return item;
+}
+
+// 時刻の表示: 予定の時刻（終了時刻があれば「10:00〜12:00」）。載せなかった決定は候補の時刻と補足、時刻が空なら「終日」
+function myPlanTimeLabel(plan) {
+  if (!plan.time) return plan.note || '終日';
+  const start = plan.time.slice(0, 5);
+  const range = plan.end_time ? `${start}〜${plan.end_time.slice(0, 5)}` : start;
+  return plan.note ? `${range} ${plan.note}` : range;
 }
 
 // 1件を読む。通常の調整は anon で直接、見つからなければ（ブラインドの調整）API から（見てよい人のときだけ返る）。
@@ -1006,6 +1127,7 @@ async function handleReopenCoordination(coordination, button) {
     state.accordionOpen.add(coordination.id);
     state.pendingScroll = { id: coordination.id, requireStatus: 'open' };
     await refreshList();
+    loadMyPlans(); // 日程調整で決まった予定も読み直す
   } catch (err) {
     alert(err.message);
     button.disabled = false;
@@ -1386,6 +1508,7 @@ async function handleDeleteCoordination(coordination) {
     await api.deleteCoordination(coordination.id, {});
     state.accordionOpen.delete(coordination.id);
     await refreshList();
+    loadMyPlans(); // 日程調整で決まった予定も読み直す
   } catch (err) {
     alert(err.message);
   }
@@ -1526,6 +1649,7 @@ async function handleAnswerSubmit(event) {
     });
     els.answerDialog.close();
     await refreshList();
+    loadMyPlans(); // 日程調整で決まった予定も読み直す
   } catch (err) {
     els.answerError.textContent = err.message;
   } finally {
@@ -1548,6 +1672,7 @@ async function handleAnswerDialogDelete() {
     });
     els.answerDialog.close();
     await refreshList();
+    loadMyPlans(); // 日程調整で決まった予定も読み直す
   } catch (err) {
     els.answerError.textContent = err.message;
   } finally {
@@ -1694,6 +1819,7 @@ async function handleEditSubmit(event) {
     state.accordionOpen.add(editDialogCtx.coordinationId);
     els.editDialog.close();
     await refreshList();
+    loadMyPlans(); // 日程調整で決まった予定も読み直す
   } catch (err) {
     els.editError.textContent = err.message; // 409（決定済み・ほかの人の編集と衝突）を含め、APIの日本語メッセージをそのまま表示
   } finally {
@@ -1782,6 +1908,7 @@ async function submitDecide(payload) {
     state.accordionOpen.add(decideDialogCtx.coordinationId);
     state.pendingScroll = { id: decideDialogCtx.coordinationId, requireStatus: 'decided' };
     await refreshList();
+    loadMyPlans(); // 日程調整で決まった予定も読み直す
   } catch (err) {
     els.decideError.textContent = err.message; // 409を含め、APIの日本語メッセージをそのまま表示
   } finally {

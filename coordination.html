@@ -42,6 +42,16 @@
   </nav>
 
   <main class="app-main coordination-app-main">
+    <!-- 日程調整で決まった予定（自分が〇△で回答して決定済みになった調整。全支部分。0件なら出さない） -->
+    <section id="my-plans-panel" class="panel my-plans-panel hidden">
+      <h2 class="selected-date-label">📅 日程調整で決まった予定</h2>
+      <div id="my-plans-list" class="my-plans-list"></div>
+      <details id="my-plans-past" class="my-plans-past hidden">
+        <summary id="my-plans-past-summary" class="my-plans-past-summary"></summary>
+        <div id="my-plans-past-list" class="my-plans-list"></div>
+      </details>
+    </section>
+
     <section class="panel branch-panel">
       <label for="branch-select">支部を選択</label>
       <select id="branch-select">
