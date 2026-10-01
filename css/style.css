@@ -1,3 +1,6 @@
+/* ページの色。--orange-light/mid/dark・--bg・--border・--accent-* などは「そのページの色」として使う。
+   ここ（:root）はスケジュール（オレンジ）と管理用のページの色。日程調整（緑）・備品管理（青）は、
+   下の body.theme-coordination / body.theme-equipment で差し替える（名前は orange のままだが、ページごとに色が変わる） */
 :root {
   --orange-light: #f5871f;
   --orange-mid: #f06e15;
@@ -10,6 +13,66 @@
   /* カードの輪郭用。--borderより一段落ち着いた濃さ（白地のパネル上で境目を出すため） */
   --border-strong: #e2cdb2;
   --danger: #d1453b;
+  --detail-bg: rgba(224, 89, 10, 0.1);
+  --accent-faint: #fff8f0; /* カレンダーのマス・備品のタイルなどの、ごく薄い背景 */
+  --accent-soft: #fdeee0; /* 参加者の行・日程調整の表の「いちばん多い候補」の行の背景 */
+  --accent-tag: #ffd9ab; /* 画像付きの備品タイルの所有支部の文字（暗い帯の上） */
+  --my-plans-bg: #fff1dc; /* 「日程調整で決まった予定」の枠の背景 */
+  --my-plans-border: var(--border-strong); /* 同じ枠の枠線 */
+  --mark-maybe: var(--orange-light); /* 日程調整の△（回答・表・「日程調整で決まった予定」の△バッジ） */
+
+  /* 3ページそれぞれの色（上のタブ用。どのページから見ても、各タブはそのページの色） */
+  --theme-schedule: #e0590a;
+  --theme-schedule-soft: #fdeee0;
+  --theme-coordination: #1e7a45;
+  --theme-coordination-soft: #e3f3e8;
+  --theme-equipment: #1f5fae;
+  --theme-equipment-soft: #e4eef9;
+}
+
+/* 日程調整のページ（緑）。調整さんに近い緑。白い文字のコントラスト比は濃い側 5.35・明るい側 3.02 */
+body.theme-coordination {
+  --orange-light: #3aa864;
+  --orange-mid: #2b9356;
+  --orange-dark: #1e7a45;
+  --bg: #f1f8f3;
+  --border: #cfe5d6;
+  --border-strong: #b5d6c0;
+  --detail-bg: rgba(30, 122, 69, 0.1);
+  --accent-faint: #f3faf5;
+  --accent-soft: #e3f3e8;
+  --accent-tag: #c7ebd3;
+  --my-plans-bg: #dceee2; /* ページ背景（#f1f8f3）より一段濃いミント色 */
+  --my-plans-border: #8fc4a1; /* はっきりした緑の枠線 */
+  --mark-maybe: #c77c0e; /* △は緑と見分けやすい山吹色（〇は --orange-dark の緑） */
+}
+
+/* 備品管理のページ（青）。白い文字のコントラスト比は濃い側 6.35・明るい側 3.42 */
+body.theme-equipment {
+  --orange-light: #3d8ee0;
+  --orange-mid: #2c78c8;
+  --orange-dark: #1f5fae;
+  --bg: #f0f5fb;
+  --border: #d3e1f0;
+  --border-strong: #b8cde6;
+  --detail-bg: rgba(31, 95, 174, 0.1);
+  --accent-faint: #f4f8fd;
+  --accent-soft: #e4eef9;
+  --accent-tag: #c4dcf6;
+}
+
+/* ログインの前の画面（読み込み中・ログイン・登録・承認待ち・利用できない）は、どのページから開いても
+   今までのオレンジのまま（色分けはログインしたあとの画面だけ）。値は上の :root と同じ */
+body.theme-coordination .boot-loading,
+body.theme-coordination .login-screen,
+body.theme-equipment .boot-loading,
+body.theme-equipment .login-screen {
+  --orange-light: #f5871f;
+  --orange-mid: #f06e15;
+  --orange-dark: #e0590a;
+  --bg: #fdf6ee;
+  --border: #ecdcc8;
+  --border-strong: #e2cdb2;
   --detail-bg: rgba(224, 89, 10, 0.1);
 }
 
@@ -253,6 +316,39 @@ body {
   border-bottom-color: var(--orange-dark);
 }
 
+/* 上のタブは、どのページから見ても各タブがそのページの色（スケジュール＝オレンジ・日程調整＝緑・備品管理＝青）。
+   開いているタブは、そのページの色の下線と薄い背景。開いていないタブは少し淡くする */
+.page-nav-link.nav-schedule {
+  color: var(--theme-schedule);
+}
+
+.page-nav-link.nav-coordination {
+  color: var(--theme-coordination);
+}
+
+.page-nav-link.nav-equipment {
+  color: var(--theme-equipment);
+}
+
+.page-nav-link.nav-schedule.is-active {
+  border-bottom-color: var(--theme-schedule);
+  background: var(--theme-schedule-soft);
+}
+
+.page-nav-link.nav-coordination.is-active {
+  border-bottom-color: var(--theme-coordination);
+  background: var(--theme-coordination-soft);
+}
+
+.page-nav-link.nav-equipment.is-active {
+  border-bottom-color: var(--theme-equipment);
+  background: var(--theme-equipment-soft);
+}
+
+.page-nav-link:not(.is-active) {
+  opacity: 0.75;
+}
+
 .app-main {
   max-width: 640px;
   margin: 0 auto;
@@ -356,7 +452,7 @@ body {
   position: relative;
   aspect-ratio: 1 / 1;
   border: 1px solid transparent;
-  background: #fff8f0;
+  background: var(--accent-faint);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
@@ -835,7 +931,7 @@ body {
   align-items: center;
   gap: 4px 8px;
   padding: 6px 10px;
-  background: #fdeee0;
+  background: var(--accent-soft);
   border-radius: 8px;
 }
 
@@ -921,7 +1017,7 @@ body {
   position: relative;
   flex: 0 0 52px;
   border-right: 1px solid var(--border);
-  background: #fff8f0;
+  background: var(--accent-faint);
 }
 
 .timeline-hour-label {
@@ -1021,7 +1117,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  background: #fff8f0;
+  background: var(--accent-faint);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 12px;
@@ -1134,7 +1230,7 @@ body {
   aspect-ratio: 1 / 1;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background-color: #fff8f0;
+  background-color: var(--accent-faint);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1327,7 +1423,7 @@ body {
   width: 100%;
   padding: 0 8px 6px;
   background: rgba(0, 0, 0, 0.65);
-  color: #ffd9ab;
+  color: var(--accent-tag);
   text-align: left;
 }
 
@@ -1838,8 +1934,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: #fff1dc;
-  border-color: var(--border-strong);
+  background: var(--my-plans-bg);
+  border-color: var(--my-plans-border);
 }
 
 .my-plans-list {
@@ -1872,7 +1968,7 @@ body {
 .my-plan-maybe-badge {
   padding: 0 6px;
   border-radius: 999px;
-  background: var(--text-muted);
+  background: var(--mark-maybe); /* 回答の△と同じ色 */
   color: #fff;
   font-size: 12px;
 }
@@ -2192,12 +2288,12 @@ thead .coordination-col-count-no {
 /* 〇が最多の候補の行全体を薄いオレンジで目立たせる。固定4列は明示的に背景色を
    上書きしないと、sticky状態では行のbackgroundが透けて反映されないため個別に指定する */
 .coordination-row-top {
-  background: #fdeee0;
+  background: var(--accent-soft);
 }
 
 .coordination-row-top .coordination-col-date,
 .coordination-row-top .coordination-col-count {
-  background: #fdeee0;
+  background: var(--accent-soft);
 }
 
 /* 回答者の列は全員同じ96px固定幅（回答者が少ないうちは横スクロールなしで収まる）。
@@ -2264,7 +2360,7 @@ thead .coordination-col-count-no {
 }
 
 .coordination-mark-maybe {
-  color: var(--orange-light);
+  color: var(--mark-maybe);
 }
 
 .coordination-mark-no {
@@ -2433,8 +2529,8 @@ thead .coordination-col-count-no {
 }
 
 .coordination-mark-radio-label-maybe.is-checked {
-  background: var(--orange-light);
-  border-color: var(--orange-light);
+  background: var(--mark-maybe);
+  border-color: var(--mark-maybe);
 }
 
 .coordination-mark-radio-label-no.is-checked {
