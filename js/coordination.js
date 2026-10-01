@@ -63,6 +63,10 @@ const api = {
   getBlindCoordinations: (branch) => request(`/api/coordinations?branch=${encodeURIComponent(branch)}`, 'GET'),
   getCoordinationByToken: (token) => request(`/api/coordinations?token=${encodeURIComponent(token)}`, 'GET'),
   getCoordinationById: (id) => request(`/api/coordinations?id=${encodeURIComponent(id)}`, 'GET'),
+  // スケジュールに載せなかった決定の取り消し（調整中に戻す。migration 0024）
+  reopenCoordination: (id) => request(`/api/coordinations?id=${encodeURIComponent(id)}&action=reopen`, 'POST', {}),
+  // 利用者の表示名（決定した人の「〇〇さんが決定」用）。[{ id, display_name }]
+  getUserNames: (ids) => request(`/api/users?action=names&ids=${ids.map(encodeURIComponent).join(',')}`, 'GET'),
 };
 
 // coordinationsとcoordination_candidatesの間には外部キーが2本ある
@@ -96,6 +100,8 @@ const state = {
   // URLの ?t= のトークン。一覧を読み直すたびに、この調整も API から取って一覧に加える（その支部を表示しているときだけ）。
   // トークンが正しくなかったときは null に戻す
   shareToken: shareTokenFromUrl,
+  // 決定した人（decided_by_user_id）→ 表示名。一度取った人は取り直さない（取れなかった人は null を入れて、次から聞かない）
+  userNames: new Map(),
   audienceOptions: [], // 選んでいる支部の「参加できる人の範囲」の候補（値の配列）
   createAudiencePicker: null, // 作成フォームの範囲の入力欄（選択肢＋新しく入力）
   editAudiencePicker: null, // 編集ダイアログの範囲の入力欄
@@ -150,6 +156,10 @@ const els = {
   decideRegisterYes: document.getElementById('decide-register-yes'),
   decideRegisterMaybe: document.getElementById('decide-register-maybe'),
   decideError: document.getElementById('decide-error'),
+  decideScheduleYes: document.getElementById('decide-schedule-yes'),
+  decideScheduleNo: document.getElementById('decide-schedule-no'),
+  decideScheduleNote: document.getElementById('decide-schedule-note'),
+  decideScheduleFields: document.getElementById('decide-schedule-fields'),
   decideSubmit: document.getElementById('decide-submit'),
   decideCancel: document.getElementById('decide-cancel'),
   editDialog: document.getElementById('edit-dialog'),
@@ -480,7 +490,24 @@ async function refreshList() {
     if (c.branch === branch && !byId.has(c.id)) byId.set(c.id, c);
   }
   state.coordinations = [...byId.values()];
+  await loadDecidedByNames(state.coordinations);
+  if (branch !== state.branch) return;
   renderList();
+}
+
+// 決定した人の表示名を、まだ取っていない人の分だけ API から取る（取れなくても一覧は出す。名前を出さないだけ）
+async function loadDecidedByNames(coordinations) {
+  const ids = [
+    ...new Set(coordinations.map((c) => c.decided_by_user_id).filter((id) => id && !state.userNames.has(id))),
+  ].slice(0, 50); // API が一度に受け付けるのは50件まで（残りは次に読み直したときに取る）
+  if (ids.length === 0) return;
+  try {
+    const rows = await api.getUserNames(ids);
+    for (const id of ids) state.userNames.set(id, null);
+    for (const row of rows || []) state.userNames.set(row.id, row.display_name);
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 function renderList() {
@@ -934,17 +961,55 @@ function createDecidedInfo(coordination) {
   text.textContent = label ? `${label}に決定` : '決定済み';
   box.appendChild(text);
 
-  // 決定で作られた予定を、スケジュール画面で直接開く（index.html?event=<id>）。
-  // 予定が削除された場合はDBトリガーで調整中に戻るため、決定済みならdecided_event_idは入っている
-  const link = document.createElement('a');
-  link.href = coordination.decided_event_id
-    ? `index.html?event=${encodeURIComponent(coordination.decided_event_id)}`
-    : 'index.html';
-  link.className = 'btn btn-outline btn-small';
-  link.textContent = 'スケジュール画面で見る';
-  box.appendChild(link);
+  // 決定した人（migration 0024 より前の決定・表示名が取れないときは出さない）
+  const deciderName = coordination.decided_by_user_id ? state.userNames.get(coordination.decided_by_user_id) : null;
+  if (deciderName) {
+    const decider = document.createElement('p');
+    decider.className = 'coordination-decided-by';
+    decider.textContent = `${deciderName}さんが決定`;
+    box.appendChild(decider);
+  }
 
+  if (coordination.decided_event_id) {
+    // 決定で作られた予定を、スケジュール画面で直接開く（index.html?event=<id>）。
+    // 予定が削除された場合はDBトリガーで調整中に戻る
+    const link = document.createElement('a');
+    link.href = `index.html?event=${encodeURIComponent(coordination.decided_event_id)}`;
+    link.className = 'btn btn-outline btn-small';
+    link.textContent = 'スケジュール画面で見る';
+    box.appendChild(link);
+    return box;
+  }
+
+  // スケジュールに載せなかった決定（migration 0024。予定が無い決定済み）
+  const note = document.createElement('p');
+  note.className = 'coordination-decided-by';
+  note.textContent = 'スケジュールには載せていません';
+  box.appendChild(note);
+  // 取り消し（調整中に戻す）は、作成者本人か、その支部を管理する管理者だけ（決定と同じ判定）
+  if (canManage(coordination)) {
+    const reopenBtn = document.createElement('button');
+    reopenBtn.type = 'button';
+    reopenBtn.className = 'btn btn-outline btn-small';
+    reopenBtn.textContent = '決定を取り消す';
+    reopenBtn.addEventListener('click', () => handleReopenCoordination(coordination, reopenBtn));
+    box.appendChild(reopenBtn);
+  }
   return box;
+}
+
+async function handleReopenCoordination(coordination, button) {
+  if (!confirm(`『${coordination.title}』の決定を取り消して、調整中に戻しますか？回答はそのまま残ります。`)) return;
+  button.disabled = true;
+  try {
+    await api.reopenCoordination(coordination.id);
+    state.accordionOpen.add(coordination.id);
+    state.pendingScroll = { id: coordination.id, requireStatus: 'open' };
+    await refreshList();
+  } catch (err) {
+    alert(err.message);
+    button.disabled = false;
+  }
 }
 
 function createShareActions(coordination) {
@@ -1494,7 +1559,26 @@ async function handleAnswerDialogDelete() {
 
 function bindDecideDialog() {
   els.decideCancel.addEventListener('click', () => els.decideDialog.close());
+  els.decideScheduleYes.addEventListener('change', updateDecideScheduleView);
+  els.decideScheduleNo.addEventListener('change', updateDecideScheduleView);
   els.decideForm.addEventListener('submit', handleDecideSubmit);
+}
+
+// 「スケジュールに載せる／載せない」に合わせて、予定の内容の欄を出し入れする。
+// 載せないときは欄の枠（fieldset）ごと disabled にして、隠れた必須の欄でフォームが送れなくならないようにする
+function updateDecideScheduleView() {
+  const addToSchedule = els.decideScheduleYes.checked;
+  els.decideScheduleFields.disabled = !addToSchedule;
+  els.decideScheduleFields.classList.toggle('hidden', !addToSchedule);
+
+  let note = '';
+  if (!addToSchedule) {
+    note = '予定も参加者の登録も作らず、この日程調整の中だけで決定済みにします。あとで「決定を取り消す」で調整中に戻せます。';
+  } else if (decideDialogCtx?.isBlind) {
+    note = 'スケジュールの予定は、ブラインドの日程調整でも、誰でも見られます。';
+  }
+  els.decideScheduleNote.textContent = note;
+  els.decideScheduleNote.classList.toggle('hidden', !note);
 }
 
 // ===================== 編集ダイアログ =====================
@@ -1618,7 +1702,11 @@ async function handleEditSubmit(event) {
 }
 
 function openDecideDialog(coordination, candidate) {
-  decideDialogCtx = { coordinationId: coordination.id, candidateId: candidate.id };
+  decideDialogCtx = { coordinationId: coordination.id, candidateId: candidate.id, isBlind: Boolean(coordination.is_blind) };
+
+  // スケジュールに載せるかの初期値: 通常の調整＝載せる、ブラインド＝載せない
+  els.decideScheduleYes.checked = !coordination.is_blind;
+  els.decideScheduleNo.checked = Boolean(coordination.is_blind);
 
   els.decideTime.value = candidate.time ? candidate.time.slice(0, 5) : '';
   els.decideEndTime.value = '';
@@ -1636,6 +1724,7 @@ function openDecideDialog(coordination, candidate) {
   els.decideRegisterYes.checked = true;
   els.decideRegisterMaybe.checked = false;
   els.decideError.textContent = '';
+  updateDecideScheduleView();
 
   els.decideDialog.showModal();
 }
@@ -1643,6 +1732,12 @@ function openDecideDialog(coordination, candidate) {
 async function handleDecideSubmit(event) {
   event.preventDefault();
   els.decideError.textContent = '';
+
+  // スケジュールに載せないときは、予定の内容を送らない（予定も参加者も作らない）
+  if (!els.decideScheduleYes.checked) {
+    await submitDecide({ candidate_id: decideDialogCtx.candidateId, add_to_schedule: false });
+    return;
+  }
 
   const place = els.decidePlace.value.trim();
   const content = els.decideContent.value.trim();
@@ -1665,18 +1760,23 @@ async function handleDecideSubmit(event) {
       ? els.decideCategoryOther.value.trim()
       : els.decideCategorySelect.value;
 
+  await submitDecide({
+    candidate_id: decideDialogCtx.candidateId,
+    add_to_schedule: true,
+    place,
+    content,
+    category: category || undefined,
+    time,
+    end_time: endTime || undefined,
+    register_yes: els.decideRegisterYes.checked,
+    register_maybe: els.decideRegisterMaybe.checked,
+  });
+}
+
+async function submitDecide(payload) {
   els.decideSubmit.disabled = true;
   try {
-    await api.decideCoordination(decideDialogCtx.coordinationId, {
-      candidate_id: decideDialogCtx.candidateId,
-      place,
-      content,
-      category: category || undefined,
-      time,
-      end_time: endTime || undefined,
-      register_yes: els.decideRegisterYes.checked,
-      register_maybe: els.decideRegisterMaybe.checked,
-    });
+    await api.decideCoordination(decideDialogCtx.coordinationId, payload);
     els.decideDialog.close();
     // 決定済みは一覧の下へ移動するため、決定した本人の画面だけ、そのカードを開いたままスクロールで追いかける
     state.accordionOpen.add(decideDialogCtx.coordinationId);

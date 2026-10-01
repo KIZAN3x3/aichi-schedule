@@ -179,6 +179,22 @@
   <form id="decide-form" class="csv-export-form">
     <h2 class="csv-export-title">この日に決定</h2>
 
+    <!-- スケジュールに載せる／載せない（migration 0024）。初期値は通常の調整＝載せる、ブラインド＝載せない -->
+    <fieldset class="decide-schedule-choice">
+      <legend class="form-field-label">スケジュールに</legend>
+      <label class="checkbox-label">
+        <input type="radio" name="decide-schedule" id="decide-schedule-yes" value="yes" />
+        載せる（予定として登録する）
+      </label>
+      <label class="checkbox-label">
+        <input type="radio" name="decide-schedule" id="decide-schedule-no" value="no" />
+        載せない（この日程調整の中だけで決定済みにする）
+      </label>
+    </fieldset>
+    <p id="decide-schedule-note" class="coordination-blind-help hidden"></p>
+
+    <!-- 予定の内容（載せるときだけ使う。載せないときは disabled にして隠し、必須のチェックからも外す） -->
+    <fieldset id="decide-schedule-fields" class="decide-schedule-fields">
     <div class="event-form-row">
       <label>
         開始時刻
@@ -216,6 +232,7 @@
       <input type="checkbox" id="decide-register-maybe" />
       △の人も参加者として登録する
     </label>
+    </fieldset>
 
     <p id="decide-error" class="form-error"></p>
     <div class="csv-export-actions">

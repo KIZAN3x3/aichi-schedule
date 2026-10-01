@@ -18,11 +18,15 @@ const {
 //   POST /api/users?action=login    : 最終ログイン日時の記録（Googleから戻った直後に1回だけ呼ぶ）
 //   GET  /api/users?action=list     : ユーザー一覧（管理者のみ。自分の権限範囲のユーザーだけ）
 //   POST /api/users?action=update   : 承認・無効化・再有効化・管理者の種類・支部・表示名の変更・削除（管理者のみ）
+//   GET  /api/users?action=names&ids=a,b : 利用者の表示名（有効な利用者のみ。日程調整の「〇〇さんが決定」などの表示用）
 // どれも Authorization: Bearer <Supabaseのアクセストークン> が必要。共通パスワードでは使えない。
 
 const DISPLAY_NAME_MAX_LENGTH = 50;
 const ADMIN_SCOPES = [null, 'branch', 'region'];
 const LIST_USERS_PER_PAGE = 1000;
+// 表示名の取得（action=names）で一度に受け付ける id の数
+const NAMES_MAX_IDS = 50;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // 一覧・更新で返す列（is_admin / admin_scope は画面での表示用）
 const PUBLIC_COLUMNS = [
@@ -49,6 +53,7 @@ const USER_REFERENCES = [
   ['participants', 'participant_user_id'],
   ['participants', 'registered_by_user_id'],
   ['coordinations', 'created_by_user_id'],
+  ['coordinations', 'decided_by_user_id'], // 決定した人（migration 0024）
   ['coordination_responses', 'participant_user_id'],
   ['coordination_responses', 'registered_by_user_id'],
   ['equipment', 'updated_by_user_id'],
@@ -70,6 +75,7 @@ module.exports = async (req, res) => {
     login: ['POST', handleLogin],
     list: ['GET', handleList],
     update: ['POST', handleUpdate],
+    names: ['GET', handleNames],
   };
   const route = routes[action];
   if (!route) {
@@ -346,7 +352,29 @@ async function handleUpdate(req, res, { appUser }) {
   return sendJson(res, 200, pick(data[0]));
 }
 
-// 相手が作った記録（app_users.id を参照している行）があるか。10列を同時に数える（どれもインデックスあり。approved_by は app_users 内）
+// GET ?action=names&ids=a,b
+//   利用者の表示名 [{ id, display_name }]。有効な利用者だけが使える（承認待ち・無効・未登録は403）。
+//   日程調整の画面は anon で読むため app_users（RLSで読めない）を結べない。決定した人の表示名はここで取る。
+//   id は最大50件。形の正しくない id は無視する。見つからない id は返さない
+async function handleNames(req, res, { appUser }) {
+  if (!appUser || appUser.status !== 'active') {
+    return sendJson(res, 403, { error: 'このアカウントは現在利用できません' });
+  }
+  const raw = typeof req.query.ids === 'string' ? req.query.ids : '';
+  const ids = [...new Set(raw.split(',').map((s) => s.trim()).filter((s) => UUID_PATTERN.test(s)))];
+  if (ids.length === 0) {
+    return sendJson(res, 200, []);
+  }
+  if (ids.length > NAMES_MAX_IDS) {
+    return sendJson(res, 400, { error: `idは${NAMES_MAX_IDS}件以内にしてください` });
+  }
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('app_users').select('id, display_name').in('id', ids);
+  if (error) throw error;
+  return sendJson(res, 200, data || []);
+}
+
+// 相手が作った記録（app_users.id を参照している行）があるか。11列を同時に数える（どれもインデックスあり。approved_by は app_users 内）
 async function hasUserRecords(supabase, userId) {
   const counts = await Promise.all(
     USER_REFERENCES.map(([table, column]) =>

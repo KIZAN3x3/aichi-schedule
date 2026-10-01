@@ -291,6 +291,7 @@ begin
     new.status := 'open';
     new.decided_candidate_id := null;
     new.decided_at := null;
+    new.decided_by_user_id := null;   -- migration 0024 で追加（列はこのファイルの末尾で追加している）
   end if;
   return new;
 end;
@@ -306,6 +307,8 @@ create trigger trg_coordinations_reopen_on_event_unlink
 -- 二重クリックでも2件目はopen条件に合わず例外で弾かれる（events重複作成を防ぐ）。
 -- p_decided_by_user_id（migration 0019で追加）: 決定した人のユーザーID。作る予定の poster_user_id と、
 -- 参加者の registered_by_user_id に入れる。参加者の participant_user_id には回答者のIDを引き継ぐ。共通パスワードでの決定は null
+-- p_add_to_schedule（migration 0024で追加）: false なら予定も参加者も作らず、調整だけを決定済みにする（decided_event_id は空）。
+-- どちらの決定でも、決定した人を coordinations.decided_by_user_id に入れる（列はこのファイルの末尾で追加している）
 create or replace function public.decide_coordination(
   p_coordination_id     uuid,
   p_candidate_id        uuid,
@@ -317,23 +320,28 @@ create or replace function public.decide_coordination(
   p_end_time            time,
   p_register_yes        boolean default true,
   p_register_maybe      boolean default false,
-  p_decided_by_user_id  uuid    default null
-) returns uuid
+  p_decided_by_user_id  uuid    default null,
+  p_add_to_schedule     boolean default true   -- false: 予定も参加者も作らず、調整だけを決定済みにする
+) returns uuid   -- 作った予定の id（載せないときは null）
 language plpgsql
 as $$
 declare
   v_branch   text;
   v_date     date;
   v_event_id uuid;
+  v_add      boolean := coalesce(p_add_to_schedule, true);
 begin
-  if p_place is null or btrim(p_place) = '' then
-    raise exception '場所を入力してください' using errcode = 'P0003';
-  end if;
-  if p_content is null or btrim(p_content) = '' then
-    raise exception '活動内容を入力してください' using errcode = 'P0003';
-  end if;
-  if p_time is null then
-    raise exception '開始時刻を入力してください' using errcode = 'P0003';
+  -- 場所・内容・開始時刻は、予定を作るときだけ必須
+  if v_add then
+    if p_place is null or btrim(p_place) = '' then
+      raise exception '場所を入力してください' using errcode = 'P0003';
+    end if;
+    if p_content is null or btrim(p_content) = '' then
+      raise exception '活動内容を入力してください' using errcode = 'P0003';
+    end if;
+    if p_time is null then
+      raise exception '開始時刻を入力してください' using errcode = 'P0003';
+    end if;
   end if;
 
   -- 対象の調整をロックしつつ、まだopenであることを確認（二重決定防止の要）
@@ -355,38 +363,41 @@ begin
     raise exception '候補が見つかりません' using errcode = 'P0002';
   end if;
 
-  insert into public.events (branch, date, time, end_time, place, content, poster_name, poster_user_id, category)
-  values (v_branch, v_date, p_time, p_end_time, p_place, p_content, p_decided_by, p_decided_by_user_id,
-          nullif(btrim(coalesce(p_category, '')), ''))
-  returning id into v_event_id;
+  if v_add then
+    insert into public.events (branch, date, time, end_time, place, content, poster_name, poster_user_id, category)
+    values (v_branch, v_date, p_time, p_end_time, p_place, p_content, p_decided_by, p_decided_by_user_id,
+            nullif(btrim(coalesce(p_category, '')), ''))
+    returning id into v_event_id;
 
-  if p_register_yes then
-    insert into public.participants (event_id, participant_name, participant_user_id, registered_by, registered_by_user_id, status)
-    select v_event_id, r.participant_name, r.participant_user_id, p_decided_by, p_decided_by_user_id, 'going'
-    from public.coordination_responses r
-    join public.coordination_answers a on a.response_id = r.id
-    where r.coordination_id = p_coordination_id
-      and a.candidate_id = p_candidate_id
-      and a.mark = 'yes'
-    on conflict (event_id, participant_name) do nothing;
-  end if;
+    if p_register_yes then
+      insert into public.participants (event_id, participant_name, participant_user_id, registered_by, registered_by_user_id, status)
+      select v_event_id, r.participant_name, r.participant_user_id, p_decided_by, p_decided_by_user_id, 'going'
+      from public.coordination_responses r
+      join public.coordination_answers a on a.response_id = r.id
+      where r.coordination_id = p_coordination_id
+        and a.candidate_id = p_candidate_id
+        and a.mark = 'yes'
+      on conflict (event_id, participant_name) do nothing;
+    end if;
 
-  if p_register_maybe then
-    insert into public.participants (event_id, participant_name, participant_user_id, registered_by, registered_by_user_id, status)
-    select v_event_id, r.participant_name, r.participant_user_id, p_decided_by, p_decided_by_user_id, 'going'
-    from public.coordination_responses r
-    join public.coordination_answers a on a.response_id = r.id
-    where r.coordination_id = p_coordination_id
-      and a.candidate_id = p_candidate_id
-      and a.mark = 'maybe'
-    on conflict (event_id, participant_name) do nothing;
+    if p_register_maybe then
+      insert into public.participants (event_id, participant_name, participant_user_id, registered_by, registered_by_user_id, status)
+      select v_event_id, r.participant_name, r.participant_user_id, p_decided_by, p_decided_by_user_id, 'going'
+      from public.coordination_responses r
+      join public.coordination_answers a on a.response_id = r.id
+      where r.coordination_id = p_coordination_id
+        and a.candidate_id = p_candidate_id
+        and a.mark = 'maybe'
+      on conflict (event_id, participant_name) do nothing;
+    end if;
   end if;
 
   update public.coordinations
   set status = 'decided',
       decided_candidate_id = p_candidate_id,
-      decided_event_id = v_event_id,
-      decided_at = now()
+      decided_event_id = v_event_id,   -- 載せないときは null のまま
+      decided_at = now(),
+      decided_by_user_id = p_decided_by_user_id
   where id = p_coordination_id;
 
   return v_event_id;
@@ -928,3 +939,16 @@ create policy "coordination_answers_select_anon"
     join public.coordinations c on c.id = r.coordination_id
     where r.id = coordination_answers.response_id and not c.is_blind
   ));
+
+-- ============================================================
+-- 日程調整の決定した人（migration 0024 と同一内容。decide_coordination の p_add_to_schedule と、
+-- トリガー関数で決定した人も空に戻すことは、上の関数に反映済み）
+-- 載せる・載せないどちらの決定でも入る。調整中に戻ると空に戻る。0024 より前に決定した行は null
+-- ============================================================
+alter table public.coordinations
+  add column if not exists decided_by_user_id uuid references public.app_users (id);
+
+comment on column public.coordinations.decided_by_user_id is
+  '決定した人（app_users.id）。載せる・載せないどちらの決定でも入る。調整中に戻ると空に戻る。migration 0024 より前に決定した行はnull';
+
+create index if not exists idx_coordinations_decided_by_user_id on public.coordinations (decided_by_user_id);

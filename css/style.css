@@ -1832,6 +1832,34 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* 決定ダイアログ: スケジュールに載せる／載せないの選択と、予定の内容の枠（fieldset の枠線・余白を消し、フォームと同じ並びにする） */
+.decide-schedule-choice,
+.decide-schedule-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.decide-schedule-choice {
+  gap: 6px;
+}
+
+.decide-schedule-choice legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+/* 決定した人（「〇〇さんが決定」） */
+.coordination-decided-by {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 /* 閉じたカードの2段目に出す範囲。長い範囲は省略し、作成日・バッジを押し出さない */
 .coordination-audience-chip {
   flex-shrink: 1;

@@ -127,7 +127,7 @@
 
 ## 機能③ 日程調整（支部ごと、調整さんに近いUI）
 
-候補日時を複数出し、回答者が〇（参加できる）／△（未定）／✕（参加できない）で回答を集めてから、作成者本人またはその支部を管理する管理者（システム管理者・県連管理者）が候補を1つ選んで決定する。決定すると、その候補日時がそのまま機能①の予定として登録される。
+候補日時を複数出し、回答者が〇（参加できる）／△（未定）／✕（参加できない）で回答を集めてから、作成者本人またはその支部を管理する管理者（システム管理者・県連管理者）が候補を1つ選んで決定する。決定すると、その候補日時がそのまま機能①の予定として登録される（決定時に「スケジュールに載せない」も選べる。migration 0024）。
 
 ### 導線
 1. 支部を選択（機能①と同じ支部・同じ保存先を共有。選んだ支部は他画面と引き継がれる）
@@ -152,6 +152,7 @@
 | decided_event_id | uuid | 決定して作られたevents.idへの外部キー（未決定はnull） |
 | decided_candidate_id | uuid | 決定した候補（coordination_candidates.id、未決定はnull） |
 | decided_at | timestamp | 決定日時 |
+| decided_by_user_id | uuid | 決定した人（`app_users.id`、migration 0024。載せる・載せないどちらの決定でも入る。調整中に戻ると空に戻る。0024より前に決定した行は空欄） |
 | audience | text | 参加できる人の範囲（任意・50文字以内、migration 0022。既存行は空欄＝範囲なし） |
 | is_blind | boolean | ブラインド（リンクを知っている人だけ）か（migration 0023。既定値false。既存行はfalse＝通常） |
 
@@ -199,6 +200,7 @@
 - 回答の編集・取消：**本人（`participant_user_id`が自分）または代理登録した人（`registered_by_user_id`が自分）**、またはその支部を管理する管理者（システム管理者・県連管理者）。ユーザーIDが空欄の回答（移行前）は管理者だけ
 - 回答の登録・編集・取消は**調整中（status=open）のときだけ**。決定済みは画面にボタンを出さず、APIも「この日程調整は決定済みのため、回答できません。」で拒否する（決定とほぼ同時に送られた回答は、まれに決定済みの調整に残りうる）
 - 決定・削除：**作成者本人（`created_by_user_id`が自分）またはその支部を管理する管理者（システム管理者・県連管理者）のみ**。削除は調整中・決定済みのどちらでも可能（決定済みを削除しても、機能①の予定と参加者は残る）
+- 決定の取り消し（スケジュールに載せなかった決定だけ。migration 0024）：決定と同じく、**作成者本人またはその支部を管理する管理者のみ**
 - 編集：**作成者本人（`created_by_user_id`が自分）またはその支部を管理する管理者（システム管理者・県連管理者）のみ**、かつ**調整中（status=open）のときだけ**。決定済みは編集不可（画面にボタンを出さず、APIも拒否する）
 - ブラインドの調整（migration 0023）を**見てよい人**：作成者本人・その支部を管理する管理者（システム管理者・自県連の県連管理者。支部管理者は含まない）・その調整に回答した人（`participant_user_id`か`registered_by_user_id`が自分。代理登録した人も含む）。判定は`api/_lib/coordinationAccess.js`の`canViewCoordination`（自分が回答した調整は`respondedCoordinationIds`。「あなたの参加予定」でも使い回す）
   - 見てよい人でなくても、トークン（`?t=`）を知っている人は見られ、回答・取消できる（回答APIに`token`を送る）。どちらでもない人には404（ブラインドの調整があることも伝えない）
@@ -206,6 +208,12 @@
 ### 覚えておくべき仕様
 - **決定すると`events`に1件登録される**：候補の日時・調整の場所と内容・決定操作をした人の名前が、そのまま機能①の予定として登録される（`events`にはタイトル列が無いため、決定ダイアログの「内容」欄の初期値に調整のタイトルを自動で含めている）
 - **〇（と任意で△）の回答者を、決定時に`participants`へ一括登録できる**（決定ダイアログのチェックボックスで選択。デフォルトは〇のみON）
+- **決定時に「スケジュールに載せる／載せない」を選べる**（migration 0024）：決定ダイアログの初期値は、通常の調整＝載せる、ブラインド＝載せない。ブラインドで載せるときは「スケジュールの予定は誰でも見られます」と注意を出す
+  - 載せない決定は、予定（`events`）も参加者（`participants`）も作らず、調整だけを決定済みにする（`decided_event_id`は空。場所・内容・時刻は入力しない）。DB関数`decide_coordination`の`p_add_to_schedule = false`
+  - 「決定済み、かつ`decided_event_id`が空」が載せない決定の目印（予定を消したときはトリガーが必ず調整中に戻すため、この組み合わせは載せない決定のときだけできる）
+  - カードは「〇月〇日に決定」「スケジュールには載せていません」。「スケジュール画面で見る」の代わりに「**決定を取り消す**」（作成者本人・その支部を管理する管理者だけ）。取り消すと調整中に戻り（状態・決定した候補・決定日時・決定した人を空にする）、回答はそのまま残る。API は`POST /api/coordinations?id=&action=reopen`（条件付きの1回のUPDATE。載せた決定には使えない（400））
+  - 載せた決定の取り消しは今までどおり、スケジュール画面で予定を削除する（トリガーで調整中に戻り、決定した人も空に戻る）
+- **決定した人を表示する**（migration 0024）：決定済みのカードに「〇〇さんが決定」。表示名は`api/users.js`の`GET ?action=names&ids=`（有効な利用者だけ使える）で取る（画面は日程調整を anon で読むため、`app_users`を結べない）。0024より前の決定・表示名が取れないときは出さない
 - **予定を削除すると、調整は自動的に「調整中」に戻る**：`events`側の行が削除されるとDBトリガーが働き、`coordinations`の`status`・`decided_candidate_id`・`decided_event_id`・`decided_at`が自動的にクリアされ、再度決定できるようになる
 - **二重決定は起きない**：決定処理はDB関数（`decide_coordination`）が1トランザクションで行い、行ロックにより同時に決定ボタンが押されても予定が2つ作られることはない
 - **専用URLで直接開ける**：`coordination.html?id=<coordination_id>`を開くと、対象の支部に画面表示だけ切り替わり（保存済みの支部設定は上書きしない）、その調整の詳細が開く。開いたあとURLから`?id=`は消える。未ログインで開いた場合はログイン後に同じ画面へ戻る
@@ -241,7 +249,7 @@
 - **`app_users`**（利用者。auth.usersと1対1）：表示名（一意にしない。別支部の同名の人がいるため）／支部（登録時に本人が入力、必須）／状態（pending=承認待ち・active=有効・disabled=無効）／`is_admin`／`admin_scope`／登録日時／承認日時／承認した人（`approved_by`）／最終ログイン日時（ログイン時のみ更新）
 - **`branch_regions`**（支部と県連の対応表、18行）：西＝西県連・1〜10支部・16支部、東＝東県連・11〜15支部
   - 同じ対応表を `js/branches.js` の `REGION_OF_BRANCH` にも持っている（画面で県連管理者の範囲を判定し、支部の選択肢を作るため。ユーザー管理画面・候補管理・CSV出力・備品・ボタンの表示で使う）。**支部の割り当てを変えるときは両方を直す**
-- 既存テーブルのnull可のユーザーID列（`app_users.id`を参照）：`events.poster_user_id`／`participants.participant_user_id`・`registered_by_user_id`／`coordinations.created_by_user_id`／`coordination_responses.participant_user_id`・`registered_by_user_id`／`equipment.updated_by_user_id`／`equipment_history.moved_by_user_id`。移行前の行はnullのまま
+- 既存テーブルのnull可のユーザーID列（`app_users.id`を参照）：`events.poster_user_id`／`participants.participant_user_id`・`registered_by_user_id`／`coordinations.created_by_user_id`／`coordination_responses.participant_user_id`・`registered_by_user_id`／`equipment.updated_by_user_id`／`equipment_history.moved_by_user_id`。移行前の行はnullのまま（あとから`equipment.created_by_user_id`（0020）・`coordinations.decided_by_user_id`（0024）も追加）
 - `app_users`・`branch_regions`はRLS有効・ポリシーなし（service_roleからのみアクセス）。既存テーブルのRLSポリシーは変えていない
 - 退会者は削除せず`status`をdisabledにする（外部キーはno actionのため、参照されているユーザーは削除できない）。**削除は、記録（予定・参加など）が1件も無い人だけ**（ユーザー管理画面の「削除」。段階3-1の項を参照）
 
@@ -266,7 +274,7 @@
     - 今の`update`と同じく、判定に使った相手の支部・`is_admin`・`admin_scope`（名前の変更では表示名も）を更新の条件に入れ、判定のあとで変わっていたら409
     - 変更後は一覧を読み直す（選んでいる支部とアコーディオンの開閉は保つ。移動した人は元の支部の一覧から消える）
   - **削除**（`update`の`op='delete'`）：退会者は無効化が基本。削除できるのは、記録が1件も無い、承認待ちか無効の人だけ（有効の人は400「先に無効化してください」）
-    - 記録＝`app_users.id`を参照している10列（`events.poster_user_id`、`participants`の`participant_user_id`・`registered_by_user_id`、`coordinations.created_by_user_id`、`coordination_responses`の2列、`equipment`の`updated_by_user_id`・`created_by_user_id`、`equipment_history.moved_by_user_id`、`app_users.approved_by`）。1件でもあれば409「この人は予定や参加などの記録があるため削除できません。無効化してください」
+    - 記録＝`app_users.id`を参照している11列（`events.poster_user_id`、`participants`の`participant_user_id`・`registered_by_user_id`、`coordinations`の`created_by_user_id`・`decided_by_user_id`、`coordination_responses`の2列、`equipment`の`updated_by_user_id`・`created_by_user_id`、`equipment_history.moved_by_user_id`、`app_users.approved_by`）。1件でもあれば409「この人は予定や参加などの記録があるため削除できません。無効化してください」
     - できる人：システム管理者（自分以外）、県連管理者（自分の県連内の人）、支部管理者（自分の支部の承認待ちの一般ユーザーだけ）。範囲外は404。**システム管理者（`is_admin = true`）は画面からは誰も削除できない**（SQL Editorだけ。一覧の`can_delete`もfalse）
     - 一覧の`can_delete`は状態と権限だけで判定する（記録の有無は含めない。一覧を重くしないため）
     - 画面：承認待ち・無効のカードに赤い「削除」。1回目の確認「〇〇さんを削除しますか？」→ `dry_run: true`で記録の有無だけを調べる（判定は本番と同じ、何も書き換えない）→ 記録があれば理由を出して終わり → 2回目の確認「元に戻せません。本当に削除しますか？」→ 削除

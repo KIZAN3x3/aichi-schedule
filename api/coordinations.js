@@ -33,6 +33,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 //   PUT    /api/coordinations?id=xxx               : 編集（調整中のときだけ。DB関数update_coordination）
 //   DELETE /api/coordinations?id=xxx               : 削除（旧 api/coordinations/[id].js）
 //   POST   /api/coordinations?id=xxx&action=decide : 決定（旧 api/coordinations/[id]/decide.js）
+//   POST   /api/coordinations?id=xxx&action=reopen : スケジュールに載せなかった決定の取り消し（調整中に戻す。migration 0024）
 // 通常の調整の一覧・専用URL（?id=）の取得は、今までどおり js/coordination.js が anon key で直接Supabaseをselectする。
 // ブラインドの調整は RLS で anon から見えないため、上の GET で返す（判定は api/_lib/coordinationAccess.js）。
 
@@ -101,6 +102,9 @@ module.exports = async (req, res) => {
   }
   if (req.method === 'POST' && id && action === 'decide') {
     return handleDecide(req, res, id);
+  }
+  if (req.method === 'POST' && id && action === 'reopen') {
+    return handleReopen(req, res, id);
   }
   if (req.method === 'PUT' && id) {
     return handleUpdate(req, res, id);
@@ -492,12 +496,15 @@ async function handleDelete(req, res, id) {
 
 // POST /api/coordinations?id=xxx&action=decide : 候補を決定してeventsへ登録（作成者本人 or その支部を管理できる管理者のみ）
 //   作る予定の投稿者名は、決定した人の表示名（送られた decided_by は使わない）。
-//   ユーザーIDも DB関数に渡す（p_decided_by_user_id。migration 0019）
-//   body: { candidate_id, place, content, category?, time, end_time?, register_yes?, register_maybe? }
+//   ユーザーIDも DB関数に渡す（p_decided_by_user_id。migration 0019。決定した人として coordinations.decided_by_user_id にも入る）
+//   body: { candidate_id, add_to_schedule?, place, content, category?, time, end_time?, register_yes?, register_maybe? }
+//   add_to_schedule（migration 0024）: false なら予定も参加者も作らず、調整だけを決定済みにする
+//     （場所・内容・時刻・参加者登録は使わない）。送られていなければ true（今までどおり載せる）
 //   権限チェックのみここで行い、実際の書き込みはDB関数 decide_coordination に任せる
 //   （events作成・participants一括登録・coordinations更新を1トランザクションで行う）
 async function handleDecide(req, res, id) {
-  const { candidate_id, place, content, category, time, end_time, register_yes, register_maybe } = req.body || {};
+  const { candidate_id, add_to_schedule, place, content, category, time, end_time, register_yes, register_maybe } =
+    req.body || {};
 
   const auth = await resolveActor(req);
   if (!auth.ok) {
@@ -509,24 +516,32 @@ async function handleDecide(req, res, id) {
   if (!candidate_id) {
     return sendJson(res, 400, { error: '決定する候補を選択してください' });
   }
+  if (add_to_schedule !== undefined && typeof add_to_schedule !== 'boolean') {
+    return sendJson(res, 400, { error: 'スケジュールに載せるかの指定が正しくありません' });
+  }
+  const addToSchedule = add_to_schedule !== false;
+
+  // 予定の内容は、スケジュールに載せるときだけ確かめる
   const trimmedPlace = typeof place === 'string' ? place.trim() : '';
   const trimmedContent = typeof content === 'string' ? content.trim() : '';
-  if (!trimmedPlace || !trimmedContent) {
-    return sendJson(res, 400, { error: '場所と活動内容を入力してください' });
-  }
   const trimmedTime = typeof time === 'string' ? time.trim() : '';
-  if (!trimmedTime) {
-    return sendJson(res, 400, { error: '開始時刻を入力してください' });
-  }
   const trimmedEndTime = typeof end_time === 'string' ? end_time.trim() : '';
-  if (trimmedEndTime && trimmedEndTime <= trimmedTime) {
-    return sendJson(res, 400, { error: '終了時間は開始時間より後にしてください' });
-  }
   const trimmedCategory = typeof category === 'string' ? category.trim() : '';
-  if (trimmedCategory.length > CATEGORY_MAX_LENGTH) {
-    return sendJson(res, 400, { error: `カテゴリは${CATEGORY_MAX_LENGTH}文字以内で入力してください` });
+  if (addToSchedule) {
+    if (!trimmedPlace || !trimmedContent) {
+      return sendJson(res, 400, { error: '場所と活動内容を入力してください' });
+    }
+    if (!trimmedTime) {
+      return sendJson(res, 400, { error: '開始時刻を入力してください' });
+    }
+    if (trimmedEndTime && trimmedEndTime <= trimmedTime) {
+      return sendJson(res, 400, { error: '終了時間は開始時間より後にしてください' });
+    }
+    if (trimmedCategory.length > CATEGORY_MAX_LENGTH) {
+      return sendJson(res, 400, { error: `カテゴリは${CATEGORY_MAX_LENGTH}文字以内で入力してください` });
+    }
+    // 固定カテゴリ外の自由入力も許可する（events.categoryと同じ扱い。候補管理への自動登録は行わない）
   }
-  // 固定カテゴリ外の自由入力も許可する（events.categoryと同じ扱い。候補管理への自動登録は行わない）
 
   const supabase = getSupabaseClient();
 
@@ -546,14 +561,15 @@ async function handleDecide(req, res, id) {
     p_coordination_id: id,
     p_candidate_id: candidate_id,
     p_decided_by: trimmedDecidedBy,
-    p_place: trimmedPlace,
-    p_content: trimmedContent,
-    p_category: trimmedCategory || null,
-    p_time: trimmedTime,
-    p_end_time: trimmedEndTime || null,
-    p_register_yes: register_yes !== false,
-    p_register_maybe: register_maybe === true,
+    p_place: addToSchedule ? trimmedPlace : null,
+    p_content: addToSchedule ? trimmedContent : null,
+    p_category: addToSchedule ? trimmedCategory || null : null,
+    p_time: addToSchedule ? trimmedTime : null,
+    p_end_time: addToSchedule ? trimmedEndTime || null : null,
+    p_register_yes: addToSchedule && register_yes !== false,
+    p_register_maybe: addToSchedule && register_maybe === true,
     p_decided_by_user_id: writerId(actor),
+    p_add_to_schedule: addToSchedule,
   });
 
   if (error) {
@@ -561,5 +577,59 @@ async function handleDecide(req, res, id) {
     return sendJson(res, status, { error: message });
   }
 
-  return sendJson(res, 200, { event_id: eventId });
+  return sendJson(res, 200, { event_id: eventId }); // 載せないときは event_id: null
+}
+
+// POST /api/coordinations?id=xxx&action=reopen : スケジュールに載せなかった決定の取り消し（migration 0024）
+//   作成者本人 or その支部を管理できる管理者のみ（決定と同じ）。
+//   対象は「決定済み、かつ予定が空（decided_event_id が null）」の調整だけ。載せた決定は、スケジュール画面で
+//   予定を削除すると DBトリガーで調整中に戻るため、ここでは扱わない（400）。
+//   状態・決定した候補・決定日時・決定した人を空に戻す。回答はそのまま残る。
+//   条件付きの1回の UPDATE で行う（決定と同時に走っても、どちらか一方しか成功しない。条件に合わなければ409）
+async function handleReopen(req, res, id) {
+  const auth = await resolveActor(req);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
+  }
+  const { actor } = auth;
+  if (!UUID_PATTERN.test(id)) {
+    return sendJson(res, 400, { error: 'IDの形式が正しくありません' });
+  }
+
+  const supabase = getSupabaseClient();
+  const { data: existing, error: fetchError } = await supabase
+    .from('coordinations')
+    .select('branch, created_by_user_id, status, decided_event_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchError || !existing) {
+    return sendJson(res, 404, { error: '日程調整が見つかりません' });
+  }
+  if (!(await canActOnCoordination(actor, existing))) {
+    return sendJson(res, 403, { error: 'この日程調整の決定を取り消せるのは、作成した本人か、この支部を管理する管理者だけです' });
+  }
+  if (existing.status !== 'decided') {
+    return sendJson(res, 409, { error: 'この日程調整は決定済みではありません。画面を読み直してください' });
+  }
+  if (existing.decided_event_id) {
+    return sendJson(res, 400, {
+      error: 'スケジュールに載せた決定は、スケジュール画面で予定を削除すると調整中に戻ります',
+    });
+  }
+
+  const { data: updated, error } = await supabase
+    .from('coordinations')
+    .update({ status: 'open', decided_candidate_id: null, decided_at: null, decided_by_user_id: null })
+    .eq('id', id)
+    .eq('status', 'decided')
+    .is('decided_event_id', null)
+    .select('id');
+  if (error) {
+    console.error('coordinations reopen failed:', error);
+    return sendJson(res, 500, { error: '決定の取り消しに失敗しました。時間をおいて再度お試しください' });
+  }
+  if (!updated || updated.length === 0) {
+    return sendJson(res, 409, { error: 'この日程調整の状態が変わりました。画面を読み直してください' });
+  }
+  return sendJson(res, 200, { id });
 }
