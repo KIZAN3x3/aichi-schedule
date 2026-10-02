@@ -15,7 +15,7 @@
 - **API**：Vercel Serverless Functions（`api/*.js`）
 - **DB／ストレージ**：Supabase（新規プロジェクト、laiton-shopとは分離、無料枠で運用）
   - Supabase Realtimeで自動反映（他端末にもリアルタイムで更新が届く）
-  - Supabase Storageで備品の画像を保存
+  - Supabase Storageで備品の画像を保存（バケット`equipment-images`は非公開。画面は期限付きURLで表示する。段階5 ③④）
 - **認証**：Googleログインだけ（Supabase Auth）。利用者は`app_users`に登録し、管理者の承認を受けてから使う
   - 権限は`app_users`の`is_admin`（システム管理者）・`admin_scope`（県連管理者・支部管理者）で決まる。詳しくは「Googleログイン＋RLS への移行」の節
   - 当初の共通パスワード（一般用・管理者用、banner-maker-v2と同じ体系）のログインは、段階5の前半で廃止した
@@ -362,7 +362,13 @@ RLS・バケットを変える前に、`pg_policies`（public・storage）と`st
   - 期限付きURLは、API（`POST /api/equipment?action=image_urls`、ログインしている有効な人だけ）が service_role でまとめて作る（1回に100件まで。画面は一覧を読んだときに、持っていない・期限が5分以内の分だけを頼む）。画面の Supabase の接続では作らない（Storage に読み取りのポリシーが無く、anon・authenticated では作れないため）。共通の処理は`api/_lib/equipmentImages.js`
   - 画面に戻ったとき（`visibilitychange`）は、期限が近い・切れた画像のURLを作り直して付け直す。画像が読めなかったとき（`error`）は、その画像のURLを作り直して1回だけ読み直す。期限付きURLがまだ無いときは、DBの`image_url`をそのまま使う
   - DBの`image_url`は書き換えない。新しくアップロードした画像も今と同じ公開URLの形を入れる（アップロードの流れ（署名付きのアップロード用URL・縮小）は変えていない）。備品の登録・編集のAPIは、このバケットの公開URLの形（`api/_lib/equipmentImages.js`の`isOwnImageUrl`）以外の画像URLを受け付けない（400）
-- **④ 画像を非公開**（予定）：バケット`equipment-images`を非公開にする。期限付きURLは API が service_role で作るので、Storage に読み取りのポリシーを足す必要は無い。戻すときはバケットを公開に戻すだけ
+- **④ 画像を非公開**（migration 0026）：バケット`equipment-images`を非公開にした（`storage.buckets`の`public`を false にしただけ。ファイル・DBの`image_url`・容量の上限・画像の形式は変えていない）
+  - 公開URLの形では、ログインなしで画像が読めない。画面は③の期限付きURLで表示する
+  - **CDNのキャッシュが残る**：Supabase の Smart CDN（`x-smart-cdn: true`）は、非公開にする前に CDN にキャッシュされた画像を、非公開にしたあとも公開URLで返し続ける（2026-10-02 07:13 UTC に非公開にし、09:00 UTC の時点でも、既存の18件はすべて公開URLで読めた。`Cache-Control: public, max-age=3600`はブラウザ向けで、CDN側はそれより長く持つ）。キャッシュに無い画像（非公開にしたあとにアップロードした画像など）は、公開URLでは読めない（400）。Smart CDN は、ファイルを変更・削除したときにキャッシュを消す
+  - 期限付きURLは API が service_role で作るので、Storage（`storage.objects`）に読み取りのポリシーは足していない
+  - アップロードは今までどおり（署名付きのアップロード用URL。`getPublicUrl`は URL の文字列を組み立てるだけなので、DB には今までと同じ公開URLの形が入る）
+  - ③より前の古い画面を開いたままの人は、CDNにキャッシュの無い画像が出なくなる。ページを読み直せば直る（期限付きURLで出る）
+  - 戻すときはバケットを公開に戻すだけ（`update storage.buckets set public = true where id = 'equipment-images';`。0026 のコメントにもある）
 - **⑤ 閲覧の締め出し**（予定）：`public.is_active_user()`（ログインしていて`app_users.status = 'active'`か。security definer）を作り、全部の表の読み取りポリシーを`to authenticated using ((select public.is_active_user()) …)`に作り直す。ポリシーの名前は今のまま（`…_select_anon`）。日程調整の4つの表は`not is_blind`の条件を残す。戻すときは、今の「誰でも読める」ポリシーに作り直す
 
 ---
