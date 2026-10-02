@@ -107,6 +107,60 @@ export async function redirectToLogin(message = 'ログインし直してくだ�
   }
 }
 
+// 段階5 ⑤: 表の読み取りは「ログインしている有効な人」だけ（RLS）。ログインが切れた人・無効にされた人の読み取りは、
+// エラーにならず 0 件で返るため、そのままだと「一覧が空」に見える。
+// 画面が直接読んだ結果が 0 件（見つからない）のときにこれを呼び、本当に読める状態かを確かめる。
+//   有効 → true（本当に 0 件）
+//   ログインが切れている → ログイン画面に戻す（redirectToLogin）。false
+//   承認待ち・無効・未登録 → ページを読み直す（開いたときの確認で、利用できない旨の画面が出る）。false
+// 確かめられなかったとき（通信の失敗、migration 0027 の前で関数が無いなど）は true を返し、今までどおり 0 件として出す。
+// 1分以内に「有効」と確かめていれば、もう一度は聞かない（予定の無い日を続けて開いたときに毎回聞かないため）
+const READ_ACCESS_CONFIRM_TTL_MS = 60 * 1000;
+let readAccessConfirmedAt = 0;
+
+export async function confirmReadAccess() {
+  if (Date.now() - readAccessConfirmedAt < READ_ACCESS_CONFIRM_TTL_MS) return true;
+  try {
+    const supabase = await getSupabaseClient();
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData || !sessionData.session) {
+      redirectToLogin();
+      return false;
+    }
+    const { data, error, status } = await supabase.rpc('is_active_user');
+    if (status === 401) {
+      redirectToLogin();
+      return false;
+    }
+    if (error) {
+      console.error(error);
+      return true;
+    }
+    if (data === true) {
+      readAccessConfirmedAt = Date.now();
+      return true;
+    }
+    // 有効ではない。API の me で今の状態を確かめ、有効でなければ読み直して、その状態の画面を出す
+    let me = null;
+    try {
+      me = await usersApi('me', 'GET');
+    } catch (err) {
+      if (err.status === 401) {
+        redirectToLogin();
+        return false;
+      }
+      console.error(err);
+      return true;
+    }
+    if (me && me.status === 'active') return true; // 判定が食い違ったときは読み直さない（読み直しを繰り返さないため）
+    location.reload();
+    return false;
+  } catch (err) {
+    console.error(err);
+    return true;
+  }
+}
+
 // api/users.js を呼ぶ（トークン必須）。me・login 以外で401なら、ログイン画面に戻す
 // （me の401は loadGoogleAccount がログイン画面を出すので、ここでは戻さない）
 export async function usersApi(action, method, body) {

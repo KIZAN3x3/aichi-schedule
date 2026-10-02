@@ -15,6 +15,7 @@ import {
   roleLabelOf,
   legacyRoleOf,
   canActOnRowFront,
+  confirmReadAccess,
 } from './auth.js';
 
 const MARK_LABELS = { yes: '〇', maybe: '△', no: '✕' };
@@ -502,6 +503,8 @@ async function openSharedCoordination(id) {
   } catch (err) {
     console.error(err);
   }
+  // 見つからないときは、ログインが切れていないかを先に確かめる（切れていれば ?id= を残したままログイン画面へ）
+  if (!data && !(await confirmReadAccess())) return;
   removeIdParamFromUrl();
 
   if (!data) {
@@ -605,6 +608,7 @@ async function refreshList() {
     els.coordinationList.appendChild(hintEl('日程調整の取得に失敗しました'));
     return;
   }
+  if ((data || []).length === 0 && !(await confirmReadAccess())) return;
   // 同じ調整が重なったら先に入れた方を使う（並び順は renderList の groupCoordinations で決める）
   const byId = new Map();
   for (const c of [...(data || []), ...(blind || []), ...(shared ? [shared] : [])]) {

@@ -8,7 +8,9 @@ let clientPromise = null;
 //   ・flowType 'pkce': Googleから戻るURLには使い捨ての ?code= だけが付き、トークンはURLに載らない
 //   ・detectSessionInUrl: クライアント作成時に ?code= を読み取ってセッションに交換する
 //   ・persistSession: セッションをlocalStorageに保存し、ページを移動してもログインを保つ
-// Googleでログイン中は、SELECTとRealtimeも authenticated ロールで動く（既存のSELECTポリシーはロールを問わないため、見える範囲は変わらない）
+// Googleでログイン中は、SELECTとRealtimeも authenticated ロールで動く。
+// 読み取りポリシーは「ログインしている有効な人だけ」（段階5 ⑤、migration 0027）。ログインしていない（anon）・承認待ち・無効の人は0件になる。
+// 0件のときに本当に読める状態かは、js/auth.js の confirmReadAccess で確かめる
 export function getSupabaseClient() {
   if (!clientPromise) {
     clientPromise = fetch('/api/config')

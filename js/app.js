@@ -33,6 +33,7 @@ import {
   adminKindOf,
   canActOnRowFront,
   isDataManager,
+  confirmReadAccess,
   isMyParticipation,
   regionBranchesOf,
 } from './auth.js';
@@ -361,6 +362,8 @@ async function openSharedEvent(id) {
     .select('id, branch, date')
     .eq('id', id)
     .maybeSingle();
+  // 見つからないときは、ログインが切れていないかを先に確かめる（切れていれば ?event= を残したままログイン画面へ）
+  if (!error && !data && !(await confirmReadAccess())) return;
   removeEventParamFromUrl();
 
   if (error || !data || !BRANCHES.includes(data.branch)) {
@@ -400,6 +403,7 @@ async function refreshMonthDates() {
     .gte('date', start)
     .lte('date', end);
 
+  if (!error && data.length === 0 && !(await confirmReadAccess())) return;
   if (error) {
     console.error(error);
   } else {
@@ -441,6 +445,7 @@ async function refreshEvents() {
     renderCurrentView('予定の取得に失敗しました');
     return;
   }
+  if (data.length === 0 && !(await confirmReadAccess())) return;
   state.events = data;
   renderCurrentView();
 }
@@ -486,6 +491,7 @@ async function refreshMyEvents() {
   }
 
   const eventIds = [...new Set(rows.map((row) => row.event_id))];
+  if (eventIds.length === 0 && !(await confirmReadAccess())) return;
   if (eventIds.length === 0) {
     state.myEvents = [];
     renderCurrentView();

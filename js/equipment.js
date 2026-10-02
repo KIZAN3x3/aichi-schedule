@@ -9,6 +9,7 @@ import {
   legacyRoleOf,
   canCreateEquipment,
   canActOnRowFront,
+  confirmReadAccess,
 } from './auth.js';
 import { api } from './api.js';
 import { OWNER_BRANCH_OPTIONS, SHARED_OWNER_BRANCHES } from './owner-branches.js';
@@ -428,6 +429,7 @@ async function fetchItems() {
     renderFatalError('備品の取得に失敗しました');
     return;
   }
+  if (data.length === 0 && !(await confirmReadAccess())) return;
   state.items = data;
   // 画像の期限付きURLをまとめて作ってから描く（画像の読み込み自体は、タイル・詳細の遅延読み込みに任せる）
   await ensureImageUrls(data.map((item) => imagePathOf(item.image_url)));
@@ -725,6 +727,7 @@ async function handleInventoryCheck() {
     if (error) {
       throw new Error(error.message);
     }
+    if (data.length === 0 && !(await confirmReadAccess())) return;
 
     // moved_at降順で取得しているので、equipment_idごとに最初に出てきたものが
     // 「指定日時以前で最新」のレコードになる
@@ -1265,6 +1268,7 @@ async function loadHistory(item, panel) {
     panel.appendChild(hintEl('履歴の取得に失敗しました'));
     return;
   }
+  if (data.length === 0 && !(await confirmReadAccess())) return;
   if (data.length === 0) {
     panel.appendChild(hintEl('履歴がありません'));
     return;
