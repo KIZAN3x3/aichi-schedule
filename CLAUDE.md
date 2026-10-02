@@ -81,7 +81,7 @@
 | id | uuid/serial | 主キー |
 | item_name | text | 品目名 |
 | location | text | 保管場所（自由記述） |
-| image_url | text | 画像URL（Supabase Storage） |
+| image_url | text | 画像URL（Supabase Storage。公開URLの形`…/storage/v1/object/public/equipment-images/items/<uuid>.<拡張子>`。画面はこのURLを直接使わず、期限付きURLで表示する（段階5 ③）） |
 | memo | text | メモ |
 | updated_by | text | 最終更新者名（自己申告） |
 | updated_at | timestamp | 更新日時 |
@@ -357,8 +357,12 @@ RLS・バケットを変える前に、`pg_policies`（public・storage）と`st
   - 移行前の行（IDが空欄）と同じ名前での本人登録は、今までどおり止めて、管理者に依頼してもらう（409）
   - `decide_coordination`の参加者の登録は`on conflict do nothing`（名前・本人のID、どちらの一意の条件に重なっても飛ばす）
 - **② 候補のAPIのログイン必須**：`GET /api/branch-options`（場所・カテゴリ・範囲・品名・種類の候補）に、ログインの確認（`resolveActor`）を入れた。未ログイン・トークンが無効は401、承認待ち・無効は403。候補を読む画面（スケジュール・日程調整・備品管理・候補管理）は、どれもログインしたあとに、トークンを付けて呼んでいる（ログイン画面からは読まない）。`api/config.js`はログイン画面に必要なので今のまま
-- **③ 画像を期限付きURLで表示**（予定。コードだけ）：画面は、DBの画像URLから`items/<uuid>.<拡張子>`を取り出し、ログイン中のSupabaseの接続で期限付きURL（1時間）を作って表示する。画面に戻ったとき（`visibilitychange`）と、画像が読めなかったときは作り直す。DBの`image_url`は書き換えない（新しい画像も同じ形のURLを入れる）。備品の登録・編集のAPIは、このバケットのURL以外を受け付けない
-- **④ 画像を非公開**（予定）：Storageに「有効な人だけ読める」ポリシーを足し、バケット`equipment-images`を非公開にする。戻すときはバケットを公開に戻すだけ
+- **③ 画像を期限付きURLで表示**（コードだけ。DBの変更なし）
+  - 画面（`js/equipment.js`）は、DBの`image_url`から画像の場所（`items/<uuid>.<拡張子>`）を取り出し、期限付きURL（1時間）で表示する。表示する場所はタイル・詳細・編集フォームのプレビューの3か所（ほかの画面に画像は無い）
+  - 期限付きURLは、API（`POST /api/equipment?action=image_urls`、ログインしている有効な人だけ）が service_role でまとめて作る（1回に100件まで。画面は一覧を読んだときに、持っていない・期限が5分以内の分だけを頼む）。画面の Supabase の接続では作らない（Storage に読み取りのポリシーが無く、anon・authenticated では作れないため）。共通の処理は`api/_lib/equipmentImages.js`
+  - 画面に戻ったとき（`visibilitychange`）は、期限が近い・切れた画像のURLを作り直して付け直す。画像が読めなかったとき（`error`）は、その画像のURLを作り直して1回だけ読み直す。期限付きURLがまだ無いときは、DBの`image_url`をそのまま使う
+  - DBの`image_url`は書き換えない。新しくアップロードした画像も今と同じ公開URLの形を入れる（アップロードの流れ（署名付きのアップロード用URL・縮小）は変えていない）。備品の登録・編集のAPIは、このバケットの公開URLの形（`api/_lib/equipmentImages.js`の`isOwnImageUrl`）以外の画像URLを受け付けない（400）
+- **④ 画像を非公開**（予定）：バケット`equipment-images`を非公開にする。期限付きURLは API が service_role で作るので、Storage に読み取りのポリシーを足す必要は無い。戻すときはバケットを公開に戻すだけ
 - **⑤ 閲覧の締め出し**（予定）：`public.is_active_user()`（ログインしていて`app_users.status = 'active'`か。security definer）を作り、全部の表の読み取りポリシーを`to authenticated using ((select public.is_active_user()) …)`に作り直す。ポリシーの名前は今のまま（`…_select_anon`）。日程調整の4つの表は`not is_blind`の条件を残す。戻すときは、今の「誰でも読める」ポリシーに作り直す
 
 ---

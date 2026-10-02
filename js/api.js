@@ -31,6 +31,8 @@ export const api = {
   updateEquipment: (id, payload) => request(`/api/equipment/${id}`, 'PUT', payload),
   deleteEquipment: (id, payload) => request(`/api/equipment/${id}`, 'DELETE', payload),
   getEquipmentUploadUrl: (payload) => request('/api/equipment/upload-url', 'POST', payload),
+  // 備品の画像の期限付きURL（1時間）をまとめて作る（段階5 ③）。paths: ['items/<uuid>.<拡張子>', ...]（最大100件）
+  getEquipmentImageUrls: (paths) => request('/api/equipment?action=image_urls', 'POST', { paths }),
   getBranchOptions: (branch, type) =>
     request(`/api/branch-options?branch=${encodeURIComponent(branch)}&type=${encodeURIComponent(type)}`, 'GET'),
   addBranchOption: (payload) => request('/api/branch-options', 'POST', payload),

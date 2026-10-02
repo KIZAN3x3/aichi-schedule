@@ -4,6 +4,7 @@ const { regionResolverFor, canActOnRow, writerName, writerId } = require('../_li
 const { sendJson, methodNotAllowed } = require('../_lib/http');
 const { SHARED_OWNER_BRANCHES } = require('../_lib/branches');
 const { parseItemName, parseItemKind, addEquipmentOptions } = require('../_lib/branchOptions');
+const { isOwnImageUrl } = require('../_lib/equipmentImages');
 
 // quantityは数値として扱い、未指定・不正値は1に、負の数は0に丸める
 function normalizeQuantity(value) {
@@ -71,7 +72,13 @@ module.exports = async (req, res) => {
     }
     if (management_number !== undefined) updates.management_number = management_number;
     if (location !== undefined) updates.location = location;
-    if (image_url !== undefined) updates.image_url = image_url;
+    if (image_url !== undefined) {
+      // 画像は、このバケットの公開URLの形だけを受け付ける（段階5 ③。空なら画像なし）
+      if (image_url && !isOwnImageUrl(image_url)) {
+        return sendJson(res, 400, { error: '画像のURLが正しくありません。画像を選び直してください' });
+      }
+      updates.image_url = image_url || null;
+    }
     if (memo !== undefined) updates.memo = memo;
     if (owner_branch !== undefined) updates.owner_branch = owner_branch || null;
     if (owner_person !== undefined) updates.owner_person = owner_person || null;

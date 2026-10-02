@@ -4,6 +4,15 @@ const { writerName, writerId } = require('./_lib/permissions');
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { SHARED_OWNER_BRANCHES, OWNER_BRANCHES } = require('./_lib/branches');
 const { parseItemName, parseItemKind, addEquipmentOptions } = require('./_lib/branchOptions');
+const {
+  IMAGE_PATH_PATTERN,
+  SIGNED_URL_EXPIRES_IN,
+  MAX_PATHS_PER_REQUEST,
+  isOwnImageUrl,
+  signImagePaths,
+} = require('./_lib/equipmentImages');
+
+const IMAGE_URL_ERROR = '画像のURLが正しくありません。画像を選び直してください';
 
 // quantityは数値として扱い、未指定・不正値は1に、負の数は0に丸める
 function normalizeQuantity(value) {
@@ -20,9 +29,15 @@ function normalizeQuantity(value) {
 //   登録した人（created_by・created_by_user_id）はここでだけ入れる（編集では変えない）。
 //   登録した人・更新者は、ログインしている人の表示名と自分のID（送られた updated_by は使わない）
 //   品名（必須）・種類（item_kind・任意）は表記をそろえて保存し、全支部共通の候補として自動で覚える（migration 0021）
+//   画像（image_url・任意）は、このバケットの公開URLの形だけを受け付ける（段階5 ③。api/_lib/equipmentImages.js）
+// POST /api/equipment?action=image_urls : 画面に出す画像の期限付きURL（1時間）をまとめて作る（段階5 ③）
+//   Vercel の関数の数を増やさないため、ここで扱う。詳しくは handleImageUrls
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return methodNotAllowed(res, ['POST']);
+  }
+  if (req.query && req.query.action === 'image_urls') {
+    return handleImageUrls(req, res);
   }
 
   const { item_name, item_kind, management_number, location, image_url, memo, owner_branch, owner_person, is_shared, quantity, is_countable } = req.body || {};
@@ -46,6 +61,9 @@ module.exports = async (req, res) => {
   const kind = parseItemKind(item_kind);
   if (kind.error) {
     return sendJson(res, 400, { error: kind.error });
+  }
+  if (image_url && !isOwnImageUrl(image_url)) {
+    return sendJson(res, 400, { error: IMAGE_URL_ERROR });
   }
 
   const supabase = getSupabaseClient();
@@ -95,3 +113,34 @@ module.exports = async (req, res) => {
 
   return sendJson(res, 201, data);
 };
+
+// POST /api/equipment?action=image_urls : 画面に出す画像の期限付きURL（1時間）をまとめて作る（段階5 ③）
+//   body: { paths: ['items/<uuid>.<拡張子>', ...] }（最大100件。重複は1つにまとめる）
+//   返り値: { urls: { 場所: 期限付きURL }, expires_in: 3600 }（ファイルが無いなどで作れなかった場所は入れない）
+//   ログインしている有効な人だけ（未ログイン・トークンが無効は401、承認待ち・無効は403）。
+//   service_role で作るので、バケットが公開でも非公開（段階5 ④）でも、Storage のポリシーに関係なく動く
+async function handleImageUrls(req, res) {
+  const auth = await resolveActor(req);
+  if (!auth.ok) {
+    return sendJson(res, auth.status, { error: auth.error });
+  }
+  const { paths } = req.body || {};
+  if (!Array.isArray(paths)) {
+    return sendJson(res, 400, { error: 'pathsを指定してください' });
+  }
+  const unique = [...new Set(paths)];
+  if (unique.length > MAX_PATHS_PER_REQUEST) {
+    return sendJson(res, 400, { error: `一度に作れるのは${MAX_PATHS_PER_REQUEST}件までです` });
+  }
+  if (!unique.every((p) => typeof p === 'string' && IMAGE_PATH_PATTERN.test(p))) {
+    return sendJson(res, 400, { error: '画像の場所の形が正しくありません' });
+  }
+
+  try {
+    const urls = await signImagePaths(getSupabaseClient(), unique);
+    return sendJson(res, 200, { urls, expires_in: SIGNED_URL_EXPIRES_IN });
+  } catch (err) {
+    console.error('equipment image_urls failed:', err);
+    return sendJson(res, 500, { error: '画像の読み込みに失敗しました。時間をおいて再度お試しください' });
+  }
+}

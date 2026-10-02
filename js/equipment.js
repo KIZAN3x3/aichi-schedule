@@ -29,6 +29,8 @@ const state = {
   role: null,
   myName: '', // ログインしている人の表示名（app_users.display_name）
   items: [],
+  // 画像の期限付きURL（段階5 ③）。画像の場所（items/<uuid>.<拡張子>）→ { url, expiresAt（ミリ秒） }
+  imageUrls: new Map(),
   supabase: null,
   realtimeChannel: null,
   viewMode: 'tile',
@@ -269,6 +271,9 @@ function handleImageFileSelected(file) {
 }
 
 function previewImageFile(file, imgEl) {
+  // 手元の画像に差し替えるので、保存済みの画像の場所の印を消す
+  // （画面に戻ったときの期限付きURLの作り直しで、前の画像に戻されないように。段階5 ③）
+  delete imgEl.dataset.imagePath;
   if (!file) {
     imgEl.classList.remove('visible');
     imgEl.removeAttribute('src');
@@ -330,6 +335,83 @@ async function boot() {
   }
   await Promise.all([fetchItems(), loadEquipmentOptions()]);
   subscribeRealtime();
+  // 画面に戻ったとき、期限が近い（または切れた）画像のURLを作り直して表示し直す（段階5 ③）
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshShownImages();
+  });
+}
+
+// ===================== 画像の期限付きURL（段階5 ③） =====================
+// DBの image_url（公開URLの形）から画像の場所を取り出し、API で期限付きURL（1時間）をまとめて作って表示する。
+// DBの image_url は書き換えない。バケットが非公開（段階5 ④）になっても、このままで動く（URLは API が service_role で作る）
+
+const IMAGE_PATH_PATTERN = /^items\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|gif)$/;
+const IMAGE_URL_BATCH = 100; // API が一度に作れる件数（api/_lib/equipmentImages.js の MAX_PATHS_PER_REQUEST と同じ）
+const IMAGE_URL_MARGIN_MS = 5 * 60 * 1000; // 期限の5分前になったら作り直す
+
+// image_url から画像の場所（items/<uuid>.<拡張子>）を取り出す。形が違えば null
+function imagePathOf(imageUrl) {
+  if (typeof imageUrl !== 'string') return null;
+  const marker = '/equipment-images/';
+  const at = imageUrl.indexOf(marker);
+  if (at < 0) return null;
+  const path = imageUrl.slice(at + marker.length).split('?')[0];
+  return IMAGE_PATH_PATTERN.test(path) ? path : null;
+}
+
+// 期限付きURLが無い・期限が近い場所の分だけ、API でまとめて作る（force なら、持っていても作り直す）。
+// 作れなかったときは今あるものをそのまま使う（画像が読めなければ、画像の error で作り直しをもう一度試す）
+async function ensureImageUrls(paths, { force = false } = {}) {
+  const now = Date.now();
+  const need = [...new Set(paths.filter(Boolean))].filter((path) => {
+    const cached = state.imageUrls.get(path);
+    return force || !cached || cached.expiresAt - IMAGE_URL_MARGIN_MS <= now;
+  });
+  for (let i = 0; i < need.length; i += IMAGE_URL_BATCH) {
+    const chunk = need.slice(i, i + IMAGE_URL_BATCH);
+    try {
+      const { urls, expires_in: expiresIn } = await api.getEquipmentImageUrls(chunk);
+      const expiresAt = Date.now() + expiresIn * 1000;
+      for (const [path, url] of Object.entries(urls || {})) state.imageUrls.set(path, { url, expiresAt });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+}
+
+// 画像の要素に、期限付きURLを付ける。まだ作れていなければ、DBの image_url をそのまま使う
+// （バケットが公開のうちは表示できる。読めなければ error で期限付きURLを作り直す）
+function setItemImage(img, item) {
+  const path = imagePathOf(item.image_url);
+  img.dataset.imagePath = path || '';
+  img.addEventListener('error', handleItemImageError);
+  const cached = path ? state.imageUrls.get(path) : null;
+  img.src = cached ? cached.url : item.image_url;
+}
+
+// 画像が読めなかったとき（期限切れなど）、その画像の期限付きURLを作り直して1回だけ読み直す
+async function handleItemImageError(event) {
+  const img = event.currentTarget;
+  const path = img.dataset.imagePath;
+  if (!path || img.dataset.imageRetried === '1') return;
+  img.dataset.imageRetried = '1';
+  await ensureImageUrls([path], { force: true });
+  const cached = state.imageUrls.get(path);
+  if (cached && img.src !== cached.url) img.src = cached.url;
+}
+
+// 画面に出ている画像のうち、期限が近い（または切れた）ものの期限付きURLを作り直して付け直す
+async function refreshShownImages() {
+  const imgs = [...document.querySelectorAll('img[data-image-path]')].filter((img) => img.dataset.imagePath);
+  if (imgs.length === 0) return;
+  await ensureImageUrls(imgs.map((img) => img.dataset.imagePath));
+  for (const img of imgs) {
+    const cached = state.imageUrls.get(img.dataset.imagePath);
+    if (cached && img.src !== cached.url) {
+      img.dataset.imageRetried = '';
+      img.src = cached.url;
+    }
+  }
 }
 
 async function fetchItems() {
@@ -347,6 +429,8 @@ async function fetchItems() {
     return;
   }
   state.items = data;
+  // 画像の期限付きURLをまとめて作ってから描く（画像の読み込み自体は、タイル・詳細の遅延読み込みに任せる）
+  await ensureImageUrls(data.map((item) => imagePathOf(item.image_url)));
   applyViewMode(state.viewMode);
 }
 
@@ -746,9 +830,9 @@ function createEquipmentTile(item) {
     tile.classList.add('has-image');
     const img = document.createElement('img');
     img.className = 'equipment-tile-image';
-    img.src = item.image_url;
     img.alt = item.item_name;
     img.loading = 'lazy';
+    setItemImage(img, item); // 期限付きURL（段階5 ③）
     tile.appendChild(img);
   } else {
     const icon = document.createElement('span');
@@ -840,9 +924,9 @@ function renderDetailBody(item, detail) {
   if (item.image_url) {
     const img = document.createElement('img');
     img.className = 'equipment-detail-image';
-    img.src = item.image_url;
     img.alt = item.item_name;
     img.loading = 'lazy';
+    setItemImage(img, item); // 期限付きURL（段階5 ③）
     detail.appendChild(img);
   } else {
     const icon = document.createElement('span');
@@ -1216,7 +1300,7 @@ function enterEditMode(item, detail) {
   const imagePreview = document.createElement('img');
   imagePreview.className = 'image-preview';
   if (item.image_url) {
-    imagePreview.src = item.image_url;
+    setItemImage(imagePreview, item); // 期限付きURL（段階5 ③）
     imagePreview.classList.add('visible');
   }
 
