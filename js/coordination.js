@@ -1543,7 +1543,12 @@ function openAnswerDialog(coordination, editingResponse) {
   els.answerDialogTitle.textContent = editingResponse ? '回答を編集' : '回答する';
   els.answerAudience.textContent = coordination.audience ? `参加できる人の範囲：${coordination.audience}` : '';
   els.answerAudience.classList.toggle('hidden', !coordination.audience);
-  els.answerName.value = editingResponse ? editingResponse.participant_name : state.myName;
+  // 自分の回答（本人のユーザーIDが自分）は、今の表示名で開く。表示名を変えた人も本人の回答として更新し、
+  // 名前も今の表示名にそろえる（段階5 ①）。ほかの人・代理登録・移行前の行は、その行の名前のまま
+  const isOwnResponse = Boolean(
+    editingResponse && state.googleUser && editingResponse.participant_user_id === state.googleUser.id
+  );
+  els.answerName.value = editingResponse && !isOwnResponse ? editingResponse.participant_name : state.myName;
   els.answerName.readOnly = Boolean(editingResponse);
   els.answerComment.value = editingResponse?.comment || '';
   updateAnswerCommentCount();

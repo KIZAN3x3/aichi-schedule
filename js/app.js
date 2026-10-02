@@ -728,9 +728,11 @@ function createMyEventRow(event) {
     if (!confirm('参加を取り消しますか？')) return;
     leaveBtn.disabled = true;
     try {
+      // 自分の参加の行（ユーザーIDが自分）の名前で取り消す。表示名を変えた人は、行に古い名前が残っていることがある
+      const ownRow = (event.participants || []).find((p) => isMyParticipation(state, p));
       await api.leaveEvent({
         event_id: event.id,
-        participant_name: state.myName,
+        participant_name: ownRow ? ownRow.participant_name : state.myName,
       });
       await refreshMyEvents();
     } catch (err) {
@@ -1208,7 +1210,10 @@ function openParticipantDialog(eventId, status, editRow) {
     radio.checked = editRow ? radio.value === editRow.status : false;
   }
 
-  els.participantName.value = editRow ? editRow.participant_name : state.myName;
+  // 自分の参加（本人のユーザーIDが自分）は、今の表示名で開く。表示名を変えた人も本人の参加として更新し、
+  // 名前も今の表示名にそろえる（段階5 ①）。ほかの人・代理登録・移行前の行は、その行の名前のまま
+  const isOwnRow = Boolean(editRow && state.googleUser && editRow.participant_user_id === state.googleUser.id);
+  els.participantName.value = editRow && !isOwnRow ? editRow.participant_name : state.myName;
   els.participantName.readOnly = Boolean(editRow);
   els.participantComment.value = editRow?.comment || '';
   updateCommentCount();

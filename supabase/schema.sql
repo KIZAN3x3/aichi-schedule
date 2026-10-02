@@ -307,6 +307,7 @@ create trigger trg_coordinations_reopen_on_event_unlink
 -- 二重クリックでも2件目はopen条件に合わず例外で弾かれる（events重複作成を防ぐ）。
 -- p_decided_by_user_id（migration 0019で追加）: 決定した人のユーザーID。作る予定の poster_user_id と、
 -- 参加者の registered_by_user_id に入れる。参加者の participant_user_id には回答者のIDを引き継ぐ。共通パスワードでの決定は null
+-- 参加者の登録は「on conflict do nothing」（migration 0025。名前・本人のユーザーID、どちらの一意の条件に重なっても飛ばす）
 -- p_add_to_schedule（migration 0024で追加）: false なら予定も参加者も作らず、調整だけを決定済みにする（decided_event_id は空）。
 -- どちらの決定でも、決定した人を coordinations.decided_by_user_id に入れる（列はこのファイルの末尾で追加している）
 create or replace function public.decide_coordination(
@@ -377,7 +378,7 @@ begin
       where r.coordination_id = p_coordination_id
         and a.candidate_id = p_candidate_id
         and a.mark = 'yes'
-      on conflict (event_id, participant_name) do nothing;
+      on conflict do nothing;   -- 名前・本人のユーザーID、どちらの一意の条件に重なっても飛ばす（0025）
     end if;
 
     if p_register_maybe then
@@ -388,7 +389,7 @@ begin
       where r.coordination_id = p_coordination_id
         and a.candidate_id = p_candidate_id
         and a.mark = 'maybe'
-      on conflict (event_id, participant_name) do nothing;
+      on conflict do nothing;   -- 名前・本人のユーザーID、どちらの一意の条件に重なっても飛ばす（0025）
     end if;
   end if;
 
@@ -952,3 +953,15 @@ comment on column public.coordinations.decided_by_user_id is
   '決定した人（app_users.id）。載せる・載せないどちらの決定でも入る。調整中に戻ると空に戻る。migration 0024 より前に決定した行はnull';
 
 create index if not exists idx_coordinations_decided_by_user_id on public.coordinations (decided_by_user_id);
+
+-- ============================================================
+-- 参加・回答の重複チェックをユーザーIDに移す（段階5 ①。migration 0025 と同一内容。decide_coordination は上の関数に反映済み）
+-- 本人のIDがある行だけ、同じ予定（日程調整）に1行。今までの名前の一意の条件は残す
+-- ============================================================
+create unique index if not exists participants_event_id_participant_user_id_key
+  on public.participants (event_id, participant_user_id)
+  where participant_user_id is not null;
+
+create unique index if not exists coordination_responses_coordination_id_participant_user_id_key
+  on public.coordination_responses (coordination_id, participant_user_id)
+  where participant_user_id is not null;

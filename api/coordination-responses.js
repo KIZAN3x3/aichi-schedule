@@ -16,6 +16,39 @@ function responseRowOwner(row, branch) {
   return { branch, userIds: [row.participant_user_id, row.registered_by_user_id] };
 }
 
+// 本人の回答（participant_user_id が自分）を探して、コメントを更新する（段階5 ①・migration 0025）。
+// 同じ日程調整に本人の回答は1行だけ（DBの一意の条件）なので、表示名を変えた人も同じ行を更新する。
+// 表示名を変えていたら、名前も今の表示名にそろえる（同じ日程調整にその名前の行がほかにあれば、名前は変えずに残す）。
+// 返り値: { row }（更新した行。見つからない・直前に消されたときは null）か { error }
+async function updateOwnResponse(supabase, { coordinationId, userId, name, comment }) {
+  const { data: own, error } = await supabase
+    .from('coordination_responses')
+    .select('*')
+    .eq('coordination_id', coordinationId)
+    .eq('participant_user_id', userId)
+    .maybeSingle();
+  if (error) return { error };
+  if (!own) return { row: null };
+
+  const updates = { comment };
+  if (own.participant_name !== name) updates.participant_name = name;
+  const run = (values) =>
+    supabase
+      .from('coordination_responses')
+      .update(values)
+      .eq('id', own.id)
+      .eq('participant_user_id', userId)
+      .select();
+  let result = await run(updates);
+  if (result.error && result.error.code === '23505' && updates.participant_name) {
+    // その名前は同じ日程調整のほかの行が使っている → 名前は今のまま、コメントだけ更新する
+    delete updates.participant_name;
+    result = await run(updates);
+  }
+  if (result.error) return { error: result.error };
+  return { row: result.data[0] || null };
+}
+
 // 生のDBエラーをクライアントに返さないための日本語メッセージ変換
 function responseErrorResponse(error) {
   if (error.code === '23503') {
@@ -33,7 +66,9 @@ function responseErrorResponse(error) {
 
 // POST /api/coordination-responses   : 日程調整への回答（登録・更新）
 //   body: { coordination_id, participant_name, comment?, answers: [{candidate_id, mark}] }
-//   同じ coordination_id + participant_name が既にあれば新規作成せず更新する。
+//   本人の回答（participant_name が自分の表示名）は、まず自分のユーザーIDで既存の行を探し、あれば更新する
+//   （表示名を変えた人も同じ日程調整に1行だけ。名前も今の表示名にそろえる。段階5 ①）。
+//   それ以外は、同じ coordination_id + participant_name が既にあれば新規作成せず更新する。
 //   更新できるのは、その行の本人（participant_user_id / registered_by_user_id。IDが空欄の行は管理者だけ）か、
 //   その支部を管理できる管理者だけ。それ以外は409。参加者機能(api/participants.js)と同じ考え方。
 //   participant_name が自分の表示名なら本人登録（participant_user_id = 自分）、違えば代理登録。
@@ -158,10 +193,27 @@ module.exports = async (req, res) => {
       normalizedAnswers.push({ candidate_id: answer.candidate_id, mark: answer.mark });
     }
 
-    // 最大2回: 新規作成 → 既存(23505)なら、既存の行の本人か確認して条件付き更新。
+    // 最大2回: （本人の回答なら自分のIDの行を更新）→ 新規作成 → 既存(23505)なら、既存の行の本人か確認して条件付き更新。
     // 更新対象0行のとき、直前に行が削除・変更されていた場合に備えてやり直す
     let response;
     for (let attempt = 0; attempt < 2 && !response; attempt += 1) {
+      if (participantUserId) {
+        const own = await updateOwnResponse(supabase, {
+          coordinationId: coordination_id,
+          userId: participantUserId,
+          name,
+          comment: trimmedComment,
+        });
+        if (own.error) {
+          const { status, message } = responseErrorResponse(own.error);
+          return sendJson(res, status, { error: message });
+        }
+        if (own.row) {
+          response = own.row;
+          break;
+        }
+      }
+
       const insertResult = await supabase
         .from('coordination_responses')
         .insert({
