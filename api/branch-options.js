@@ -8,6 +8,7 @@ const { TABLES, EQUIPMENT_OPTION_TABLES, addBranchOption } = require('./_lib/bra
 // GET    /api/branch-options?branch=◯◯&type=place|category|audience : 支部ごとの過去入力候補を取得（audience は日程調整の範囲）
 // POST   /api/branch-options { branch, type, value } : 候補を追加（重複はエラーにせず無視）
 // DELETE /api/branch-options { id, type }            : 候補を削除
+// 取得（GET）は、ログインしている有効な人だけ（段階5 ②。未ログイン・トークンが無効は401、承認待ち・無効は403）。
 // 追加・削除は「入力候補の管理」の権限（その支部を管理できる管理者: システム管理者・その県連の県連管理者）。
 // 予定の投稿時の自動追加（api/_lib/branchOptions.js）はこのAPIを通らないため影響しない
 //
@@ -20,6 +21,12 @@ const { TABLES, EQUIPMENT_OPTION_TABLES, addBranchOption } = require('./_lib/bra
 //   候補の追加は、備品の登録・編集のときに api/equipment*.js が自動で行う（このAPIのPOSTでは追加できない）
 module.exports = async (req, res) => {
   if (req.method === 'GET') {
+    // 候補の取得も、ログインしている有効な人だけ（段階5 ②）。
+    // 未ログイン・トークンが無効は401、承認待ち・無効は403（api/_lib/auth.js の resolveActor）
+    const auth = await resolveActor(req);
+    if (!auth.ok) {
+      return sendJson(res, auth.status, { error: auth.error });
+    }
     const { branch, type } = req.query || {};
     if (EQUIPMENT_OPTION_TABLES[type]) {
       return getEquipmentOptions(res, type);
@@ -107,7 +114,7 @@ module.exports = async (req, res) => {
   return methodNotAllowed(res, ['GET', 'POST', 'DELETE']);
 };
 
-// 備品の品名・種類の候補を取得する（全支部共通・認証なし。場所の候補の GET と同じ扱い）
+// 備品の品名・種類の候補を取得する（全支部共通。ログインの確認は呼び出し元の GET で済ませている）
 async function getEquipmentOptions(res, type) {
   const supabase = getSupabaseClient();
   let query = supabase.from(EQUIPMENT_OPTION_TABLES[type]);
