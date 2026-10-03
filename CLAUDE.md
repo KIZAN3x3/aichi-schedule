@@ -12,8 +12,8 @@
 
 - **フロントエンド**：素のHTML+JS（ビルド不要、Vite/React等は使わない）
 - **ホスティング**：Vercel
-- **API**：Vercel Serverless Functions（`api/*.js`）
-- **DB／ストレージ**：Supabase（新規プロジェクト、laiton-shopとは分離、無料枠で運用）
+- **API**：Vercel Serverless Functions（`api/*.js`）。動かす地域は東京（`hnd1`。`vercel.json`の`regions`）。無料プランは1地域だけ選べる。2026-10-03 までは既定の米国東部（`iad1`）だった
+- **DB／ストレージ**：Supabase（新規プロジェクト、laiton-shopとは分離、無料枠で運用。東京リージョン（`ap-northeast-1`））
   - Supabase Realtimeで自動反映（他端末にもリアルタイムで更新が届く）
   - Supabase Storageで備品の画像を保存（バケット`equipment-images`は非公開。画面は期限付きURLで表示する。段階5 ③④）
 - **認証**：Googleログインだけ（Supabase Auth）。利用者は`app_users`に登録し、管理者の承認を受けてから使う
