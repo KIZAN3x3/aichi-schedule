@@ -2,6 +2,7 @@
 // ログインはGoogleだけ（共通パスワードのログインは段階5で廃止した）。
 import { getSupabaseClient } from './supabase-client.js';
 import { BRANCHES, REGION_OF_BRANCH } from './branches.js';
+import { clearEquipmentImageStore } from './equipment-image-store.js';
 
 // Googleから戻ってきた直後に1回だけ「最終ログイン日時」を記録するための目印（ページをまたいで残るようsessionStorage）
 const GOOGLE_LOGIN_PENDING_KEY = 'aichi-schedule:googleLoginPending';
@@ -288,6 +289,9 @@ export async function signOutLocal() {
 
 // Googleのログアウト。画面の状態を確実に初期化するため、ログアウト後にページを読み直す
 export async function googleLogout() {
+  // 備品の画像の端末の保存分（Cache Storage・IndexedDB）と blob: のURLも消す。
+  // 中で例外を出さず、数秒で戻るので、失敗してもログアウトは止まらない
+  await clearEquipmentImageStore();
   try {
     await signOutLocal();
   } finally {

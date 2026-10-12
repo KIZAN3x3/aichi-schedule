@@ -14,6 +14,17 @@ import {
 import { api } from './api.js';
 import { OWNER_BRANCH_OPTIONS, SHARED_OWNER_BRANCHES } from './owner-branches.js';
 import { createOptionPicker, groupKindOptions, kindChoicesFor, OPTION_MAX_LENGTH } from './equipment-options.js';
+import {
+  openImageStore,
+  readStoredImage,
+  writeStoredImage,
+  deleteStoredImage,
+  listStoredImagePaths,
+  imageObjectUrlOf,
+  setImageObjectUrl,
+  revokeImageObjectUrl,
+  imageObjectUrlPaths,
+} from './equipment-image-store.js';
 
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -32,6 +43,11 @@ const state = {
   items: [],
   // 画像の期限付きURL（段階5 ③）。画像の場所（items/<uuid>.<拡張子>）→ { url, expiresAt（ミリ秒） }
   imageUrls: new Map(),
+  // 画像を端末に保存して使い回すか（Cache Storage か IndexedDB が使えるとき。js/equipment-image-store.js）
+  useImageStore: false,
+  imageDownloads: new Map(), // ダウンロード中の画像の場所 → Promise（blob: のURL か null）
+  imageFetchFailed: false, // 画像を fetch で取れなかった（CORS など）。true なら、このページでは期限付きURLで表示する
+  recentUploadPaths: new Set(), // この画面でアップロードした画像の場所（掃除で消さない）
   supabase: null,
   realtimeChannel: null,
   viewMode: 'tile',
@@ -360,6 +376,111 @@ function imagePathOf(imageUrl) {
   return IMAGE_PATH_PATTERN.test(path) ? path : null;
 }
 
+// ===================== 画像の端末への保存（転送量の対策） =====================
+// 期限付きURLは毎回変わるため、ブラウザのキャッシュが効かず、ページを開くたびに全画像をダウンロードし直していた。
+// 一度取った画像は、画像の場所を鍵にして端末（Cache Storage、無ければ IndexedDB。js/equipment-image-store.js）に保存し、
+// 次からは blob: のURLで表示する（期限付きURLは作らない）。端末に無い画像だけ、期限付きURLを作って取ってくる。
+// 保存先が使えない環境（state.useImageStore が false）では、今までどおり期限付きURLで表示する
+
+const IMAGE_DOWNLOAD_CONCURRENCY = 4; // 同時にダウンロードする画像の数
+let activeImageDownloads = 0;
+const imageDownloadQueue = [];
+
+// ダウンロードの同時実行数を IMAGE_DOWNLOAD_CONCURRENCY までに抑えて fn を行う
+async function withImageDownloadSlot(fn) {
+  if (activeImageDownloads < IMAGE_DOWNLOAD_CONCURRENCY) {
+    activeImageDownloads += 1;
+  } else {
+    await new Promise((resolve) => imageDownloadQueue.push(resolve)); // 空いた枠をそのまま受け継ぐ
+  }
+  try {
+    return await fn();
+  } finally {
+    const next = imageDownloadQueue.shift();
+    if (next) next();
+    else activeImageDownloads -= 1;
+  }
+}
+
+// 端末に保存してある画像を、blob: のURLにしておく（ネットには出ない）
+async function loadStoredImages(paths) {
+  const store = await openImageStore();
+  if (!store) return;
+  await Promise.all(
+    paths
+      .filter((path) => !imageObjectUrlOf(path))
+      .map(async (path) => {
+        const blob = await readStoredImage(store, path);
+        if (blob) setImageObjectUrl(path, blob);
+      })
+  );
+}
+
+// 画像の blob: のURLを返す。端末に無ければ取ってきて保存する（同じ画像を同時に二重には取らない）。
+// 保存先が使えない・取ってこられなかったときは null（呼び出し側は期限付きURLで表示する）
+function obtainImageObjectUrl(path) {
+  const ready = imageObjectUrlOf(path);
+  if (ready) return Promise.resolve(ready);
+  if (!state.imageDownloads.has(path)) {
+    state.imageDownloads.set(
+      path,
+      downloadImage(path).finally(() => state.imageDownloads.delete(path))
+    );
+  }
+  return state.imageDownloads.get(path);
+}
+
+async function downloadImage(path) {
+  const store = await openImageStore();
+  if (!store) return null;
+  const stored = await readStoredImage(store, path);
+  if (stored) return setImageObjectUrl(path, stored);
+  await ensureImageUrls([path]); // 一覧を読んだときにまとめて作ってあれば、API は呼ばない
+  const signed = state.imageUrls.get(path);
+  if (!signed) return null;
+  try {
+    const blob = await withImageDownloadSlot(async () => {
+      const res = await fetch(signed.url);
+      if (!res.ok) return null;
+      if (!(res.headers.get('Content-Type') || '').startsWith('image/')) return null;
+      return res.blob();
+    });
+    if (!blob) return null;
+    await writeStoredImage(store, path, blob); // 保存できなくても（容量不足など）、表示はする
+    return setImageObjectUrl(path, blob);
+  } catch (err) {
+    // 通信・CORS の失敗。このページを開いている間は取りに行くのをやめ、期限付きURLでの表示に戻る
+    // （描き直すたびに fetch と img の両方で同じ画像を取って、転送量が増えないように）
+    console.error(err);
+    state.imageFetchFailed = true;
+    return null;
+  }
+}
+
+// 自分でアップロードした画像は、その場で端末に保存する（登録・編集のあとにダウンロードし直さないため）
+async function rememberUploadedImage(path, file) {
+  if (!path) return;
+  state.recentUploadPaths.add(path);
+  const store = await openImageStore();
+  if (!store) return;
+  await writeStoredImage(store, path, file);
+  setImageObjectUrl(path, file);
+}
+
+// 今の一覧に無い画像の保存分と blob: のURLを消す（差し替え・削除で使われなくなった画像）。
+// この画面でアップロードした画像は、備品の登録・編集の前に一覧が読み直されることがあるので消さない
+async function pruneStoredImages(keepPaths) {
+  const keep = new Set([...keepPaths, ...state.recentUploadPaths]);
+  for (const path of imageObjectUrlPaths()) {
+    if (!keep.has(path)) revokeImageObjectUrl(path);
+  }
+  const store = await openImageStore();
+  if (!store) return;
+  for (const path of await listStoredImagePaths(store)) {
+    if (!keep.has(path)) await deleteStoredImage(store, path);
+  }
+}
+
 // 期限付きURLが無い・期限が近い場所の分だけ、API でまとめて作る（force なら、持っていても作り直す）。
 // 作れなかったときは今あるものをそのまま使う（画像が読めなければ、画像の error で作り直しをもう一度試す）
 async function ensureImageUrls(paths, { force = false } = {}) {
@@ -380,30 +501,64 @@ async function ensureImageUrls(paths, { force = false } = {}) {
   }
 }
 
-// 画像の要素に、期限付きURLを付ける。まだ作れていなければ、DBの image_url をそのまま使う
+// 画像の要素に、画像を付ける。端末の保存分があれば blob: のURL。無ければ取ってきて保存してから付ける。
+// 保存先が使えない・取ってこられないときは期限付きURL。それもまだ作れていなければ、DBの image_url をそのまま使う
 // （バケットが公開のうちは表示できる。読めなければ error で期限付きURLを作り直す）
 function setItemImage(img, item) {
   const path = imagePathOf(item.image_url);
   img.dataset.imagePath = path || '';
   img.addEventListener('error', handleItemImageError);
-  const cached = path ? state.imageUrls.get(path) : null;
-  img.src = cached ? cached.url : item.image_url;
+  const objectUrl = path ? imageObjectUrlOf(path) : null;
+  if (objectUrl) {
+    img.src = objectUrl;
+    return;
+  }
+  if (path && state.useImageStore && !state.imageFetchFailed) {
+    obtainImageObjectUrl(path).then((url) => {
+      if (img.dataset.imagePath !== path) return; // その間に手元の画像（編集のプレビュー）に差し替えられた
+      if (url) img.src = url;
+      else setSignedImage(img, path, item.image_url);
+    });
+    return;
+  }
+  setSignedImage(img, path, item.image_url);
 }
 
-// 画像が読めなかったとき（期限切れなど）、その画像の期限付きURLを作り直して1回だけ読み直す
+function setSignedImage(img, path, fallbackUrl) {
+  const cached = path ? state.imageUrls.get(path) : null;
+  img.src = cached ? cached.url : fallbackUrl;
+}
+
+// 画像が読めなかったとき、1回だけ読み直す。
+// 端末の保存分（blob:）が読めなかったときは、保存分を消して取り直す。期限付きURL（期限切れなど）なら作り直す
 async function handleItemImageError(event) {
   const img = event.currentTarget;
   const path = img.dataset.imagePath;
   if (!path || img.dataset.imageRetried === '1') return;
   img.dataset.imageRetried = '1';
+  if (img.src.startsWith('blob:')) {
+    revokeImageObjectUrl(path);
+    const store = await openImageStore();
+    if (store) await deleteStoredImage(store, path);
+    const url = await obtainImageObjectUrl(path);
+    if (img.dataset.imagePath !== path) return;
+    if (url) {
+      img.src = url;
+      return;
+    }
+  }
   await ensureImageUrls([path], { force: true });
   const cached = state.imageUrls.get(path);
-  if (cached && img.src !== cached.url) img.src = cached.url;
+  if (img.dataset.imagePath === path && cached && img.src !== cached.url) img.src = cached.url;
 }
 
-// 画面に出ている画像のうち、期限が近い（または切れた）ものの期限付きURLを作り直して付け直す
+// 画面に出ている画像のうち、期限が近い（または切れた）ものの期限付きURLを作り直して付け直す。
+// 端末の保存分（blob:。期限が無い）と、まだ取ってきている途中（src が無い）の画像は対象にしない
 async function refreshShownImages() {
-  const imgs = [...document.querySelectorAll('img[data-image-path]')].filter((img) => img.dataset.imagePath);
+  const imgs = [...document.querySelectorAll('img[data-image-path]')].filter((img) => {
+    const src = img.getAttribute('src');
+    return img.dataset.imagePath && src && !src.startsWith('blob:');
+  });
   if (imgs.length === 0) return;
   await ensureImageUrls(imgs.map((img) => img.dataset.imagePath));
   for (const img of imgs) {
@@ -431,9 +586,20 @@ async function fetchItems() {
   }
   if (data.length === 0 && !(await confirmReadAccess())) return;
   state.items = data;
-  // 画像の期限付きURLをまとめて作ってから描く（画像の読み込み自体は、タイル・詳細の遅延読み込みに任せる）
-  await ensureImageUrls(data.map((item) => imagePathOf(item.image_url)));
+  const paths = [...new Set(data.map((item) => imagePathOf(item.image_url)).filter(Boolean))];
+  state.useImageStore = Boolean(await openImageStore());
+  if (state.useImageStore) {
+    // 端末の保存分を先に読んでから描く（保存分のある画像はすぐ出る）。
+    // 端末に無い画像の分だけ期限付きURLをまとめて作っておき、描いたあとに取ってくる（setItemImage）
+    await loadStoredImages(paths);
+    await ensureImageUrls(paths.filter((path) => !imageObjectUrlOf(path)));
+  } else {
+    // 保存先が使えない環境は今までどおり：期限付きURLをまとめて作ってから描く
+    await ensureImageUrls(paths);
+  }
   applyViewMode(state.viewMode);
+  // 一覧が0件のとき（ログインの状態などで0件が返った場合を含む）は、全部消してしまわないよう掃除しない
+  if (state.useImageStore && data.length > 0) pruneStoredImages(paths);
 }
 
 function setViewMode(mode) {
@@ -1568,6 +1734,11 @@ async function uploadImage(file) {
     .uploadToSignedUrl(path, token, file, { contentType: file.type });
   if (error) {
     throw new Error(error.message);
+  }
+  try {
+    await rememberUploadedImage(imagePathOf(publicUrl), file);
+  } catch (err) {
+    console.warn(err); // 端末に保存できなくても、アップロードは成功扱い
   }
   return publicUrl;
 }
