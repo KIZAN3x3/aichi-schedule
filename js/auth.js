@@ -60,10 +60,26 @@ export function canManageBranchData(session, branch) {
   return false;
 }
 
-// 県連管理者を含め、データを管理できる管理者か（候補管理・CSV出力のボタンを出すかどうか）
+// 県連管理者を含め、データを管理できる管理者か（候補管理のボタン・画面に入れるかどうか。CSV出力は canExportCsv）
 export function isDataManager(session) {
   const kind = adminKindOf(session.googleUser);
   return kind === 'grand' || kind === 'region';
+}
+
+// CSV出力のボタンを出すか（システム管理者・県連管理者・支部管理者。api/export-csv.js と同じ範囲）
+export function canExportCsv(session) {
+  const kind = adminKindOf(session.googleUser);
+  return kind === 'grand' || kind === 'region' || kind === 'branch';
+}
+
+// CSV出力で選べる支部（api/export-csv.js と同じ範囲）
+//   システム管理者: null（制限なし） / 県連管理者: 自分の県連の支部 / 支部管理者: 自分の支部（app_users.branch）だけ / それ以外: 空
+export function csvExportBranchesOf(user) {
+  const kind = adminKindOf(user);
+  if (kind === 'grand') return null;
+  if (kind === 'region') return regionBranchesOf(user);
+  if (kind === 'branch') return [user.branch];
+  return [];
 }
 
 // 備品を新規登録できるか（ログインしている有効な利用者は全員）

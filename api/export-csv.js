@@ -178,7 +178,10 @@ async function fetchHistory(supabase, { from, to, branch, branchesIn }) {
 //   ・システム管理者: 全支部（branch を省略すると全支部）
 //   ・県連管理者: 自分の県連の支部の分だけ。branch を省略すると自分の県連の全支部、県連の外の支部を指定したら403。
 //     備品・在庫チェック履歴は、所有支部が自分の県連内のものだけ（branch 指定時はその支部と自分の県連の県連所有分）
-//   ・それ以外（支部管理者・一般）: 不可
+//   ・支部管理者: 自分の支部（app_users.branch）の分だけ。ほかの支部を指定したら403、branch を省略しても自分の支部。
+//     備品・在庫チェック履歴は、所有支部が自分の支部のものだけ（県連所有分は足さない。
+//     西県連・東県連の支部管理者は、その県連所有分が自分の支部の分になる）
+//   ・それ以外（一般）: 不可
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return methodNotAllowed(res, ['POST']);
@@ -194,11 +197,17 @@ module.exports = async (req, res) => {
     return sendJson(res, 400, { error: 'typeが不正です' });
   }
 
-  // 県連管理者は、自分の県連の支部に絞る（branchesIn）
+  // 県連管理者は、自分の県連の支部に絞る（branchesIn）。支部管理者は、自分の支部だけ
   let branchesIn = null;
-  if (!isGlobalManager(actor)) {
+  if (actor.kind === 'branch') {
+    const myBranch = actor.user.branch;
+    if (branch && branch !== myBranch) {
+      return sendJson(res, 403, { error: 'CSV出力は、自分が管理者の支部だけ選べます' });
+    }
+    branchesIn = [myBranch];
+  } else if (!isGlobalManager(actor)) {
     if (actor.kind !== 'region') {
-      return sendJson(res, 403, { error: 'CSV出力は、システム管理者と県連管理者だけが使えます' });
+      return sendJson(res, 403, { error: 'CSV出力は、システム管理者・県連管理者・支部管理者だけが使えます' });
     }
     const regionOf = await regionResolverFor(actor);
     const myRegion = regionOf(actor.user.branch);

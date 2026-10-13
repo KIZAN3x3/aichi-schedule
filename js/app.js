@@ -33,9 +33,10 @@ import {
   adminKindOf,
   canActOnRowFront,
   isDataManager,
+  canExportCsv,
+  csvExportBranchesOf,
   confirmReadAccess,
   isMyParticipation,
-  regionBranchesOf,
 } from './auth.js';
 
 const MY_EVENTS_DISMISSED_KEY = 'aichi-schedule:myEventsDismissed';
@@ -319,10 +320,11 @@ function enterApp() {
   els.app.classList.remove('hidden');
   els.roleText.textContent = roleLabelOf(state.googleUser);
   els.roleDot.classList.toggle('admin', state.role === 'admin');
-  // 候補管理・CSV出力: システム管理者（全支部）と、県連管理者（自分の県連内）
+  // 候補管理: システム管理者（全支部）と、県連管理者（自分の県連内）
   els.branchOptionsBtn.classList.toggle('hidden', !isDataManager(state));
-  els.csvExportBtn.classList.toggle('hidden', !isDataManager(state));
-  if (adminKindOf(state.googleUser) === 'region') restrictCsvExportBranchOptions();
+  // CSV出力: システム管理者（全支部）、県連管理者（自分の県連内）、支部管理者（自分の支部だけ）
+  els.csvExportBtn.classList.toggle('hidden', !canExportCsv(state));
+  restrictCsvExportBranchOptions();
   // ユーザー管理は、管理者（システム管理者・県連管理者・支部管理者）だけ
   els.userAdminBtn.classList.toggle('hidden', !adminKindOf(state.googleUser));
   boot();
@@ -1478,11 +1480,15 @@ function renderFatalError(message) {
   els.eventList.appendChild(hintEl(message));
 }
 
-// 県連管理者のCSV出力: 支部の選択肢を自分の県連内だけにする（空欄＝自分の県連の全支部）
+// CSV出力の支部の選択肢を、出力できる支部だけにする（システム管理者は今のまま「全支部」＋19択）
+//   県連管理者: 「自分の県連の全支部」（空欄）＋自分の県連の支部
+//   支部管理者: 自分の支部だけ（「全支部」「自分の県連の全支部」は出さない）
 function restrictCsvExportBranchOptions() {
-  const allowed = regionBranchesOf(state.googleUser);
+  const kind = adminKindOf(state.googleUser);
+  if (kind !== 'region' && kind !== 'branch') return;
+  const allowed = csvExportBranchesOf(state.googleUser);
   els.csvExportBranch.innerHTML = '';
-  els.csvExportBranch.appendChild(new Option('自分の県連の全支部', ''));
+  if (kind === 'region') els.csvExportBranch.appendChild(new Option('自分の県連の全支部', ''));
   for (const branch of allowed) els.csvExportBranch.appendChild(new Option(branch, branch));
 }
 
