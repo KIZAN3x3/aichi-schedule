@@ -222,12 +222,16 @@ export function setupGoogleLogin() {
   });
 }
 
-// Googleの認証画面へ移動する。戻り先は今のページ（?event= や ?id= を含む。#以降は除く）
+// Googleの認証画面へ移動する。戻り先は今のページ（?event= や ?id= を含む。#以降は除く）。
+// Googleに複数のアカウントでログインしていても選べるよう、毎回アカウント選択の画面を出す（prompt=select_account）
 async function startGoogleLogin() {
   sessionStorage.setItem(GOOGLE_LOGIN_PENDING_KEY, '1');
   const supabase = await getSupabaseClient();
   const redirectTo = `${location.origin}${location.pathname}${location.search}`;
-  const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo, queryParams: { prompt: 'select_account' } },
+  });
   if (error) {
     sessionStorage.removeItem(GOOGLE_LOGIN_PENDING_KEY);
     throw error;
