@@ -689,8 +689,9 @@ body {
 
 .my-event-row {
   display: flex;
+  flex-wrap: wrap; /* 1段目：日時と予定名、2段目：ボタン */
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 12px;
@@ -703,11 +704,16 @@ body {
 }
 
 .my-event-row-info {
-  flex: 1;
+  flex: 1 1 100%; /* 1段目を占め、ボタンを2段目に回す */
   min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 8px;
+}
+
+/* 2段目のボタンは右に寄せる（「📅 追加」が無い行は「参加を取り消す」が先頭になる） */
+.my-event-row-info + * {
+  margin-left: auto;
 }
 
 .my-event-row-datetime {
@@ -727,7 +733,7 @@ body {
   white-space: nowrap;
 }
 
-/* 参加予定の行の「📅 追加」（Googleカレンダー。1行に収めるため、折り返さない） */
+/* 参加予定の行の「📅 追加」（Googleカレンダー。ボタンの文字は折り返さない） */
 .my-event-row .gcal-link {
   flex-shrink: 0;
   white-space: nowrap;
