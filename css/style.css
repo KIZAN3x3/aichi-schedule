@@ -103,6 +103,14 @@ body {
 .btn-small {
   padding: 8px 14px;
   font-size: 15px;
+  line-height: 1.4; /* <button>（ブラウザ既定のフォント）と <a>（ページのフォント）で、同じ高さにする */
+}
+
+/* <a> をボタンの見た目で使うとき（「📅 Googleカレンダーに追加」「スケジュール画面で見る」「日程調整を開く」など）。
+   リンクの下線を消す。並び（flex）の外でも余白が正しく効くよう inline-block にする */
+a.btn {
+  display: inline-block;
+  text-decoration: none;
 }
 
 .btn-primary {
