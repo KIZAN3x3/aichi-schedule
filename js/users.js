@@ -6,6 +6,9 @@ import { loadGoogleAccount, showAccountGate, googleLogout, usersApi, adminKindOf
 
 const ALL = 'all';
 const SELECTED_BRANCH_KEY = 'aichi-schedule:usersBranch';
+// アコーディオンの開閉（タブを開いている間だけ覚える。読み込み直し・ほかの画面から戻ったときも保つ）
+const OPEN_GROUPS_KEY = 'aichi-schedule:usersOpen';
+const DEFAULT_OPEN = { pending: true, active: false, disabled: false };
 
 const STATUS_GROUPS = [
   { status: 'pending', title: '承認待ち' },
@@ -28,8 +31,9 @@ const state = {
   kind: null, // 'grand' | 'region' | 'branch'
   users: [], // list の結果（自分の権限範囲のユーザー。自分自身は含まれない）
   branch: ALL, // 選んでいる支部（ALL = すべて）
-  // アコーディオンの開閉。承認待ちは最初から開き、有効・無効は閉じておく。操作のあとの読み直しでも保つ
-  open: { pending: true, active: false, disabled: false },
+  // アコーディオンの開閉。保存した値が無ければ、承認待ちは開き、有効・無効は閉じておく。
+  // 操作のあとの読み直しでも、ページの読み込み直しでも保つ（sessionStorage）
+  open: loadOpenGroups(),
 };
 
 const els = {
@@ -157,6 +161,31 @@ function saveSelectedBranch(branch) {
   }
 }
 
+// 保存した開閉。無い・読めない・形が違うときは DEFAULT_OPEN（項目ごとに、true/false でなければ既定値）
+function loadOpenGroups() {
+  let saved = null;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(OPEN_GROUPS_KEY));
+  } catch (err) {
+    saved = null;
+  }
+  const open = { ...DEFAULT_OPEN };
+  if (saved && typeof saved === 'object') {
+    for (const status of Object.keys(DEFAULT_OPEN)) {
+      if (typeof saved[status] === 'boolean') open[status] = saved[status];
+    }
+  }
+  return open;
+}
+
+function saveOpenGroups(open) {
+  try {
+    sessionStorage.setItem(OPEN_GROUPS_KEY, JSON.stringify(open));
+  } catch (err) {
+    // 保存できなくても表示は続ける（その画面を開いている間は state で保つ）
+  }
+}
+
 // 選択肢を作り直す（承認待ちの人数が変わるため、読み直すたびに作る）。選んでいる支部は保つ
 function renderBranchSelect() {
   const pendingCount = (branch) =>
@@ -237,6 +266,7 @@ function renderList() {
     details.open = state.open[group.status];
     details.addEventListener('toggle', () => {
       state.open[group.status] = details.open;
+      saveOpenGroups(state.open);
     });
 
     const summary = document.createElement('summary');
@@ -496,7 +526,10 @@ function createScopeEditor(user) {
   apply.textContent = '変更';
   apply.addEventListener('click', async () => {
     const next = select.value || null;
-    if (next === (user.admin_scope || null)) return;
+    if (next === (user.admin_scope || null)) {
+      alert('今と同じ種類です');
+      return;
+    }
     const nextLabel = SCOPE_OPTIONS.find((o) => o.value === (next || '')).label;
     if (!confirm(`${user.display_name}さんを「${nextLabel}」にしますか？`)) return;
     apply.disabled = true;
