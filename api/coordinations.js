@@ -220,7 +220,8 @@ async function handleGet(req, res) {
 //   返り値: { upcoming, upcoming_total, past, past_total }
 //     upcoming … 今日（日本時間）以降。日付・時刻の早い順。最大 MY_PLANS_UPCOMING_MAX 件
 //     past     … 今日より前（終わった予定）。新しい順。最大 MY_PLANS_PAST_MAX 件
-//     1件: { id, title, branch, place, is_blind, mark, date, time, end_time, note, event_id, share_token }
+//     1件: { id, title, branch, place, is_blind, mark, date, time, end_time, note, category, event_id, share_token }
+//       category はスケジュールに載せた決定だけ（予定のカテゴリ。Googleカレンダーの説明欄に使う）。
 //       event_id はスケジュールに載せたときだけ、share_token はブラインドのときだけ入る（本人は回答しているので見てよい人）。
 //       ほかの人の回答や名前は返さない
 async function loadMyPlans(supabase, userId) {
@@ -234,7 +235,7 @@ async function loadMyPlans(supabase, userId) {
       'id, branch, title, place, is_blind, decided_candidate_id, decided_event_id, ' +
         'coordination_candidates!coordination_candidates_coordination_id_fkey(id, date, time, note), ' +
         'coordination_responses(participant_user_id, coordination_answers(candidate_id, mark)), ' +
-        'decided_event:events!coordinations_decided_event_id_fkey(date, time, end_time)'
+        'decided_event:events!coordinations_decided_event_id_fkey(date, time, end_time, category)'
     )
     .in('id', ids)
     .eq('status', 'decided');
@@ -266,6 +267,7 @@ async function loadMyPlans(supabase, userId) {
       time: event ? event.time : (candidate && candidate.time) || null,
       end_time: event ? event.end_time : null,
       note: event ? null : (candidate && candidate.note) || null,
+      category: event ? event.category || null : null,
       event_id: c.decided_event_id || null,
     });
   }

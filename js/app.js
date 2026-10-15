@@ -20,6 +20,7 @@ import {
   WEEKDAY_LABELS,
 } from './date-utils.js';
 import { replaceChatworkBrackets, chatworkInfo, createShareActions } from './share.js';
+import { createGoogleCalendarLink, todayInTokyo } from './gcal.js';
 import { renderTimeline } from './timeline.js';
 import { loadHolidays, isHoliday } from './holidays.js';
 import {
@@ -762,6 +763,10 @@ function createMyEventRow(event) {
   });
 
   row.appendChild(info);
+  if (canAddToCalendar(event)) {
+    const calendarLink = createGoogleCalendarLink(eventCalendarParams(event), { label: '📅 追加' });
+    if (calendarLink) row.appendChild(calendarLink);
+  }
   row.appendChild(leaveBtn);
   row.appendChild(dismissBtn);
   return row;
@@ -982,13 +987,15 @@ function createEventCard(event) {
   }
 
   card.appendChild(createParticipantsSection(event));
-  // 共有用のコピーボタンは全員に出す（コピーするだけなので権限は不要）。終了済みの予定には出さない
+  // 共有用のコピーボタンは全員に出す（コピーするだけなので権限は不要）。終了済みの予定には出さない。
+  // 同じ並びに「📅 Googleカレンダーに追加」（日付が過ぎた予定には出さない）
   if (!event.finished_at) {
     card.appendChild(
       createShareActions({
         getChatworkText: () => buildEventChatworkText(event),
         getUrl: () => buildEventUrl(event),
         className: 'event-share-actions',
+        extraButtons: canAddToCalendar(event) ? [createGoogleCalendarLink(eventCalendarParams(event))] : [],
       })
     );
   }
@@ -1005,6 +1012,28 @@ function formatEventTimeRange(event) {
 
 function buildEventUrl(event) {
   return new URL(`index.html?event=${event.id}`, location.href).href;
+}
+
+// Googleカレンダーに追加できるか（終了済み・日付が過ぎた予定には出さない）
+function canAddToCalendar(event) {
+  return !event.finished_at && Boolean(event.date) && event.date >= todayInTokyo();
+}
+
+// 題名は活動内容の1行目（予定には題名の列が無いため）。空ならカテゴリ、それも空なら「〇〇支部の予定」。
+// 説明欄は支部・カテゴリ・この予定へのリンクだけ
+function eventCalendarParams(event) {
+  const firstLine = (event.content || '').split('\n')[0].trim();
+  const details = [`支部: ${event.branch}`];
+  if (event.category) details.push(`カテゴリ: ${event.category}`);
+  details.push(`詳細: ${buildEventUrl(event)}`);
+  return {
+    title: firstLine || event.category || `${event.branch}の予定`,
+    date: event.date,
+    time: event.time,
+    endTime: event.end_time,
+    place: event.place,
+    details: details.join('\n'),
+  };
 }
 
 // 場所・内容・カテゴリは自由記述のため、[ ] を全角にしてチャットワークの記法が崩れないようにする

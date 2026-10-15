@@ -4,6 +4,7 @@ import { CATEGORY_OPTIONS, OTHER_CATEGORY } from './categories.js';
 import { formatDateWithWeekday } from './date-utils.js';
 import { replaceChatworkBrackets, chatworkInfo, createShareActions as createCopyButtons } from './share.js';
 import { createOptionPicker } from './equipment-options.js';
+import { createGoogleCalendarLink } from './gcal.js';
 import {
   getAuthHeaders,
   redirectToLogin,
@@ -394,7 +395,7 @@ function renderMyPlans({ upcoming = [], upcoming_total = 0, past = [], past_tota
   if (upcoming.length === 0) {
     els.myPlansList.appendChild(hintEl('これからの予定はありません'));
   }
-  for (const plan of upcoming) els.myPlansList.appendChild(createMyPlanItem(plan));
+  for (const plan of upcoming) els.myPlansList.appendChild(createMyPlanItem(plan, { upcoming: true }));
   if (upcoming_total > upcoming.length) {
     els.myPlansList.appendChild(hintEl(`ほかに${upcoming_total - upcoming.length}件あります`));
   }
@@ -412,7 +413,8 @@ function renderMyPlans({ upcoming = [], upcoming_total = 0, past = [], past_tota
 // 1件: 日付・時刻（△・🔒のバッジ）／題名／支部・場所／導線
 //   スケジュールに載せた決定 … 「スケジュール画面で見る」（index.html?event=）
 //   どれも                    … 「日程調整を開く」（ブラインドは ?t=、通常は ?id=）
-function createMyPlanItem(plan) {
+//   これからの予定だけ        … 「📅 Googleカレンダーに追加」（終わった予定には出さない）
+function createMyPlanItem(plan, { upcoming = false } = {}) {
   const item = document.createElement('article');
   item.className = 'my-plan-item';
 
@@ -465,6 +467,10 @@ function createMyPlanItem(plan) {
   openLink.className = 'btn btn-outline btn-small';
   openLink.textContent = '日程調整を開く';
   actions.appendChild(openLink);
+  if (upcoming) {
+    const calendarLink = createGoogleCalendarLink(myPlanCalendarParams(plan));
+    if (calendarLink) actions.appendChild(calendarLink);
+  }
   item.appendChild(actions);
 
   return item;
@@ -476,6 +482,26 @@ function myPlanTimeLabel(plan) {
   const start = plan.time.slice(0, 5);
   const range = plan.end_time ? `${start}〜${plan.end_time.slice(0, 5)}` : start;
   return plan.note ? `${range} ${plan.note}` : range;
+}
+
+// Googleカレンダーに入れる内容。題名は調整の題名、説明欄は支部・カテゴリ（載せた決定だけ）・リンク。
+// リンクは、載せた決定は予定（?event=）、載せない決定は調整の ?id=。
+// ブラインドでも ?t=（トークン）は入れない（カレンダーが共有されていると、誰でも開いて回答できてしまうため）。?id= は見てよい人だけが開ける
+function myPlanCalendarParams(plan) {
+  const url = plan.event_id
+    ? new URL(`index.html?event=${encodeURIComponent(plan.event_id)}`, location.href).href
+    : new URL(`coordination.html?id=${encodeURIComponent(plan.id)}`, location.href).href;
+  const details = [`支部: ${plan.branch}`];
+  if (plan.category) details.push(`カテゴリ: ${plan.category}`);
+  details.push(`詳細: ${url}`);
+  return {
+    title: plan.title || `${plan.branch}の予定`,
+    date: plan.date,
+    time: plan.time,
+    endTime: plan.end_time,
+    place: plan.place,
+    details: details.join('\n'),
+  };
 }
 
 // 1件を読む。通常の調整は anon で直接、見つからなければ（ブラインドの調整）API から（見てよい人のときだけ返る）。

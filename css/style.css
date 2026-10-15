@@ -727,6 +727,12 @@ body {
   white-space: nowrap;
 }
 
+/* 参加予定の行の「📅 追加」（Googleカレンダー。1行に収めるため、折り返さない） */
+.my-event-row .gcal-link {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .event-card {
   background: var(--card-bg);
   border: 1px solid var(--border-strong);

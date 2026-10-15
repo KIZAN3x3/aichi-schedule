@@ -41,8 +41,8 @@ export function flashCopyResult(btn, ok) {
 }
 
 // 「💬 チャットワーク用にコピー」「🔗 リンクだけコピー」の2つのボタン＋手動コピー用の欄。
-// 文面とURLはクリックした時点で組み立てる
-export function createShareActions({ getChatworkText, getUrl, className = '' }) {
+// 文面とURLはクリックした時点で組み立てる。extraButtons は同じ並びに置くほかのボタン（予定カードの「📅 Googleカレンダーに追加」）
+export function createShareActions({ getChatworkText, getUrl, className = '', extraButtons = [] }) {
   const wrap = document.createElement('div');
   wrap.className = className ? `share-actions ${className}` : 'share-actions';
 
@@ -68,6 +68,6 @@ export function createShareActions({ getChatworkText, getUrl, className = '' }) 
     flashCopyResult(linkBtn, ok);
   });
 
-  wrap.append(chatworkBtn, linkBtn, fallback);
+  wrap.append(chatworkBtn, linkBtn, ...extraButtons.filter(Boolean), fallback);
   return wrap;
 }
