@@ -12,6 +12,7 @@ import {
   isDataManager,
   regionBranchesOf,
 } from './auth.js';
+import { initNotifications } from './notifications.js';
 
 const TYPE_LABELS = { place: '場所候補', category: 'カテゴリ候補', audience: '範囲候補' };
 
@@ -88,6 +89,7 @@ async function restoreSession() {
   state.role = legacyRoleOf(account.user);
   state.myName = account.user.display_name;
   lockHeaderName(els, account.user);
+  initNotifications(); // ヘッダーの 🔔（未読数はここで1回読む）
   enterApp();
 }
 

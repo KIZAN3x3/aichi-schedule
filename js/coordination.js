@@ -18,6 +18,7 @@ import {
   canActOnRowFront,
   confirmReadAccess,
 } from './auth.js';
+import { initNotifications } from './notifications.js';
 
 const MARK_LABELS = { yes: '〇', maybe: '△', no: '✕' };
 const MARK_ARIA_LABELS = { yes: '参加できる', maybe: '未定', no: '参加できない' };
@@ -322,6 +323,7 @@ async function restoreSession() {
   state.role = legacyRoleOf(account.user);
   state.myName = account.user.display_name;
   lockHeaderName(els, account.user);
+  initNotifications(); // ヘッダーの 🔔（未読数はここで1回読む）
   enterApp();
 }
 

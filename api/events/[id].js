@@ -2,6 +2,7 @@ const { getSupabaseClient } = require('../_lib/supabase');
 const { resolveActor } = require('../_lib/auth');
 const { sendJson, methodNotAllowed } = require('../_lib/http');
 const { regionResolverFor, canActOnRow } = require('../_lib/permissions');
+const { notifySafely, goingParticipantIds, notifyEventChanged, notifyEventDeleted } = require('../_lib/notifications');
 
 // PUT /api/events/:id    予定編集（本人 or その支部を管理できる管理者のみ）
 //                        終了・戻す（finished だけの更新）は、その予定に「参加」で登録している本人もできる
@@ -27,7 +28,7 @@ module.exports = async (req, res) => {
 
     const { data: existing, error: fetchError } = await supabase
       .from('events')
-      .select('branch, poster_user_id, time')
+      .select('branch, poster_user_id, date, time, end_time, place')
       .eq('id', id)
       .single();
     if (fetchError || !existing) {
@@ -70,6 +71,8 @@ module.exports = async (req, res) => {
     if (error) {
       return sendJson(res, 500, { error: error.message });
     }
+    // ⑤ 参加した予定の変更のお知らせ（日付・時刻・終了時刻・場所が変わったときだけ。操作した本人は除く）
+    await notifySafely('event_changed', () => notifyEventChanged(supabase, existing, data, actor.user.id));
     return sendJson(res, 200, data);
   }
 
@@ -82,7 +85,7 @@ module.exports = async (req, res) => {
 
     const { data: existing, error: fetchError } = await supabase
       .from('events')
-      .select('branch, poster_user_id')
+      .select('id, branch, poster_user_id, date, time, end_time, place, content')
       .eq('id', id)
       .single();
     if (fetchError || !existing) {
@@ -93,10 +96,18 @@ module.exports = async (req, res) => {
       return sendJson(res, 403, { error: 'この予定を削除できるのは、登録した本人か、この支部を管理する管理者だけです' });
     }
 
+    // ⑤ 削除のお知らせの送り先は、消す前に読む（予定を消すと参加の行も一緒に消えるため）。読めなくても削除は続ける
+    let goingIds = [];
+    try {
+      goingIds = await goingParticipantIds(supabase, id);
+    } catch (err) {
+      console.error('notifications(event_deleted): 参加者の取得に失敗:', err);
+    }
     const { error } = await supabase.from('events').delete().eq('id', id);
     if (error) {
       return sendJson(res, 500, { error: error.message });
     }
+    await notifySafely('event_deleted', () => notifyEventDeleted(supabase, existing, goingIds, actor.user.id));
     return sendJson(res, 204, null);
   }
 

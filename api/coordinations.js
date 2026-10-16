@@ -4,6 +4,7 @@ const { regionResolverFor, canActOnRow, writerName, writerId } = require('./_lib
 const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 const { addBranchOption } = require('./_lib/branchOptions');
+const { notifySafely, notifyCoordinationCreated, notifyCoordinationDecided } = require('./_lib/notifications');
 const {
   COORDINATION_SELECT,
   respondedCoordinationIds,
@@ -479,6 +480,11 @@ async function handleCreate(req, res) {
     await addBranchOption(supabase, { branch, type: 'audience', value: audienceValue });
   }
 
+  // ③ 日程調整の立ち上げのお知らせ（ブラインドは通知しない。範囲付きでも支部の範囲の全員に届け、文に範囲を書く）
+  await notifySafely('coordination_created', () =>
+    notifyCoordinationCreated(supabase, coordination, candidateRows, writerId(actor))
+  );
+
   return sendJson(res, 201, { ...coordination, coordination_candidates: candidateRows });
 }
 
@@ -675,6 +681,10 @@ async function handleDecide(req, res, id) {
     const { status, message } = decideErrorResponse(error);
     return sendJson(res, status, { error: message });
   }
+
+  // ④ 決定のお知らせ（通常は支部の範囲の人、ブラインドは作成者・回答した人・代理登録した人だけ。決定した本人は除く）。
+  //   決定で作られた予定には②（予定の立ち上げ）は出さない（api/events.js を通らないため、ここで④だけを作る）
+  await notifySafely('coordination_decided', () => notifyCoordinationDecided(supabase, id, writerId(actor)));
 
   return sendJson(res, 200, { event_id: eventId }); // 載せないときは event_id: null
 }

@@ -39,6 +39,7 @@ import {
   confirmReadAccess,
   isMyParticipation,
 } from './auth.js';
+import { initNotifications } from './notifications.js';
 
 const MY_EVENTS_DISMISSED_KEY = 'aichi-schedule:myEventsDismissed';
 const PARTICIPANT_COMMENT_MAX = 200;
@@ -309,6 +310,7 @@ async function restoreSession() {
   state.role = legacyRoleOf(account.user);
   state.myName = account.user.display_name;
   lockHeaderName(els, account.user);
+  initNotifications(); // ヘッダーの 🔔（未読数はここで1回読む）
   enterApp();
 }
 

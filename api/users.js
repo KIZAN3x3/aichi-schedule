@@ -19,6 +19,9 @@ const {
 //   GET  /api/users?action=list     : ユーザー一覧（管理者のみ。自分の権限範囲のユーザーだけ）
 //   POST /api/users?action=update   : 承認・無効化・再有効化・管理者の種類・支部・表示名の変更・削除（管理者のみ）
 //   GET  /api/users?action=names&ids=a,b : 利用者の表示名（有効な利用者のみ。日程調整の「〇〇さんが決定」などの表示用）
+//   POST /api/users?action=notifications_read    : 自分のお知らせを既読にする（{ all: true } か { ids }。有効な利用者のみ）
+//   POST /api/users?action=notification_settings : 自分のお知らせのオンオフを変える（送った種類だけ。有効な利用者のみ）
+//   お知らせと設定の読み取りは、画面が Supabase から直接読む（本人だけが読める RLS。migration 0028）
 // どれも Authorization: Bearer <Supabaseのアクセストークン> が必要。共通パスワードでは使えない。
 
 const DISPLAY_NAME_MAX_LENGTH = 50;
@@ -27,6 +30,12 @@ const LIST_USERS_PER_PAGE = 1000;
 // 表示名の取得（action=names）で一度に受け付ける id の数
 const NAMES_MAX_IDS = 50;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// お知らせを既読にする（action=notifications_read）とき、一度に受け付ける id の数
+const NOTIFICATIONS_READ_MAX_IDS = 100;
+// お知らせのオンオフの列（migration 0028 の notification_settings）
+const NOTIFICATION_SETTING_KEYS = [
+  'event_reminder', 'event_created', 'coordination_created', 'coordination_decided', 'event_changed',
+];
 
 // 一覧・更新で返す列（is_admin / admin_scope は画面での表示用）
 const PUBLIC_COLUMNS = [
@@ -76,6 +85,8 @@ module.exports = async (req, res) => {
     list: ['GET', handleList],
     update: ['POST', handleUpdate],
     names: ['GET', handleNames],
+    notifications_read: ['POST', handleNotificationsRead],
+    notification_settings: ['POST', handleNotificationSettings],
   };
   const route = routes[action];
   if (!route) {
@@ -372,6 +383,59 @@ async function handleNames(req, res, { appUser }) {
   const { data, error } = await supabase.from('app_users').select('id, display_name').in('id', ids);
   if (error) throw error;
   return sendJson(res, 200, data || []);
+}
+
+// POST ?action=notifications_read  body: { all: true } か { ids: [uuid, …] }（最大100件）
+//   自分のお知らせのうち、まだ読んでいないものを既読にする（read_at に今の日時）
+async function handleNotificationsRead(req, res, { appUser }) {
+  if (!appUser || appUser.status !== 'active') {
+    return sendJson(res, 403, { error: 'このアカウントは現在利用できません' });
+  }
+  const { all, ids } = req.body || {};
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('user_id', appUser.id)
+    .is('read_at', null);
+  if (all !== true) {
+    const list = Array.isArray(ids) ? [...new Set(ids.filter((id) => typeof id === 'string' && UUID_PATTERN.test(id)))] : [];
+    if (list.length === 0 || list.length > NOTIFICATIONS_READ_MAX_IDS) {
+      return sendJson(res, 400, { error: '既読にするお知らせが正しくありません' });
+    }
+    query = query.in('id', list);
+  }
+  const { error } = await query;
+  if (error) throw error;
+  return sendJson(res, 200, { ok: true });
+}
+
+// POST ?action=notification_settings  body: { event_created: false, … }（送った種類だけを変える。値は true/false）
+//   行が無ければ作る（作るときは、送らなかった種類は初期値の ON）。返り値: 5つの種類の今の値
+async function handleNotificationSettings(req, res, { appUser }) {
+  if (!appUser || appUser.status !== 'active') {
+    return sendJson(res, 403, { error: 'このアカウントは現在利用できません' });
+  }
+  const body = req.body || {};
+  const updates = {};
+  for (const key of NOTIFICATION_SETTING_KEYS) {
+    if (body[key] === undefined) continue;
+    if (typeof body[key] !== 'boolean') {
+      return sendJson(res, 400, { error: '設定の値が正しくありません' });
+    }
+    updates[key] = body[key];
+  }
+  if (Object.keys(updates).length === 0) {
+    return sendJson(res, 400, { error: '変更する設定がありません' });
+  }
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('notification_settings')
+    .upsert({ user_id: appUser.id, ...updates, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+    .select(NOTIFICATION_SETTING_KEYS.join(', '))
+    .single();
+  if (error) throw error;
+  return sendJson(res, 200, data);
 }
 
 // 相手が作った記録（app_users.id を参照している行）があるか。11列を同時に数える（どれもインデックスあり。approved_by は app_users 内）

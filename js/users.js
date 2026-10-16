@@ -3,6 +3,7 @@
 // 画面の支部の絞り込み・支部管理者の表示・承認待ちの人数は、api/users.js の list が返す内容だけで作っている
 import { BRANCHES, REGION_OF_BRANCH } from './branches.js';
 import { loadGoogleAccount, showAccountGate, googleLogout, usersApi, adminKindOf, roleLabelOf } from './auth.js';
+import { initNotifications } from './notifications.js';
 
 const ALL = 'all';
 const SELECTED_BRANCH_KEY = 'aichi-schedule:usersBranch';
@@ -102,6 +103,7 @@ async function init() {
 
   els.app.classList.remove('hidden');
   els.nameDisplayValue.textContent = account.user.display_name;
+  initNotifications(); // ヘッダーの 🔔（管理者でない人の「管理者だけが使えます」の画面でも出す）
   els.roleText.textContent = roleLabelOf(account.user);
   els.roleDot.classList.toggle('admin', Boolean(account.user.is_admin));
 

@@ -11,6 +11,7 @@ import {
   canActOnRowFront,
   confirmReadAccess,
 } from './auth.js';
+import { initNotifications } from './notifications.js';
 import { api } from './api.js';
 import { OWNER_BRANCH_OPTIONS, SHARED_OWNER_BRANCHES } from './owner-branches.js';
 import { createOptionPicker, groupKindOptions, kindChoicesFor, OPTION_MAX_LENGTH } from './equipment-options.js';
@@ -326,6 +327,7 @@ async function restoreSession() {
   state.role = legacyRoleOf(account.user);
   state.myName = account.user.display_name;
   lockHeaderName(els, account.user);
+  initNotifications(); // ヘッダーの 🔔（未読数はここで1回読む）
   enterApp();
 }
 

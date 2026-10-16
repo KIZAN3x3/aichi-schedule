@@ -401,6 +401,23 @@ RLS・バケットを変える前に、`pg_policies`（public・storage）と`st
 
 ---
 
+## お知らせ（段階的に実施中）
+
+### 段階1（migration 0028）：アプリ内のお知らせ一覧と設定（プッシュなし）
+- **`notifications`**（1人1行）：種類（`kind`）・題名・本文・開く画面（`url`）・`event_id`・`coordination_id`（外部キーにしない。削除のお知らせを残すため）・`dedupe_key`（`user_id`と組で一意。同じお知らせを2つ作らない）・`created_at`・`read_at`
+- **`notification_settings`**（1人1行、行が無ければすべて ON）：①`event_reminder` ②`event_created` ③`coordination_created` ④`coordination_decided` ⑤`event_changed`（変更・削除の両方）。OFF の種類はお知らせの行も作らない
+- どちらも`app_users`を on delete cascade で参照（記録ではないので、ユーザーの削除を止めない）。読み取りは本人だけ（`to authenticated using ((select public.is_active_user()) and user_id = (select auth.uid()))`）、書き込みは API（service_role）だけ。Realtime には入れない
+- **届く人**：1〜16支部はその支部の有効な人、西県連・東県連はその県連（`branch_regions`。県連自身の行もある）の全支部と県連の有効な人。操作した本人には届けない（①だけは作った本人にも届ける。段階3）
+  - ②予定の作成（決定で作られた予定には出さない）／③日程調整の作成（ブラインドは出さない。範囲付きは支部の範囲の全員に届け、本文に範囲）／④決定（通常は支部の範囲、ブラインドは作成者・回答した人・代理登録した人だけ（管理者には届けない）。`url`に`?t=`は入れない）／⑤参加した予定の日付・時刻・終了時刻・場所の変更と削除（`status='going'`で`participant_user_id`がある人。削除は消す前に参加者を読む。内容・カテゴリ・終了・戻すは通知しない）
+- 作る処理は`api/_lib/notifications.js`（各 API が`notifySafely`で包む。失敗しても元の操作は成功のまま）。ローカルの確認では`NOTIFICATIONS_TEST_ALLOWLIST`（app_users.id のカンマ区切り）で届ける相手を絞る。開発サーバー（`npx vercel dev`）が読むのは`.env`（`.env.local`は読まない）なので`.env`に置き、確認が終わったら戻す。本番には置かない。開発サーバー（関数に`NOW_REGION=dev1`が渡る）では、許可リストが空ならお知らせを作らない
+- API：`POST /api/users?action=notifications_read`（`{ all: true }`か`{ ids }`）・`?action=notification_settings`（送った種類だけ変える）。関数の数（12個）を増やさないため`api/users.js`にまとめた
+- **画面**（`js/notifications.js`、全ページ。有効な利用者のログインを確かめたあとに`initNotifications()`を呼ぶ）：ヘッダーの「ログアウト」の左に 🔔 と未読数。押すとダイアログに新しい30件と「⚙ 通知の設定」（②〜⑤の4つ。①のスイッチは段階3で足す。列は 0028 で作ってある）。文字はすべて textContent で入れる
+  - 開くと、表示した行のうち未読だったものだけを既読にし（`{ ids }`）、未読数を読み直す（30件より古い未読が残っていれば、その数が出る）
+  - 転送量を増やさないため、未読数は件数だけ（head）を、ページを開いたとき・タブに戻ったとき（60秒に1回まで）・既読にしたあとだけ読む。一覧と設定は開いたときだけ読む
+- 古いお知らせは60日で消す（段階3の Cron）
+
+---
+
 ## デザイン
 - イメージカラーは既存アプリ（banner-maker-v2等）と合わせ、橙色グラデーション系を基本とする
   - 参考：`#f5871f` → `#f06e15` → `#e0590a`

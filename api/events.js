@@ -5,6 +5,7 @@ const { sendJson, methodNotAllowed } = require('./_lib/http');
 const { BRANCHES } = require('./_lib/branches');
 const { FIXED_CATEGORIES } = require('./_lib/categories');
 const { addBranchOption } = require('./_lib/branchOptions');
+const { notifySafely, notifyEventCreated } = require('./_lib/notifications');
 
 // POST /api/events : 新規予定投稿（一般ユーザー・管理者どちらも可）
 module.exports = async (req, res) => {
@@ -61,6 +62,9 @@ module.exports = async (req, res) => {
   if (trimmedCategory && !FIXED_CATEGORIES.includes(trimmedCategory)) {
     await addBranchOption(supabase, { branch, type: 'category', value: trimmedCategory });
   }
+
+  // ② 予定の立ち上げのお知らせ（その支部の範囲の有効な人。投稿した本人は除く）。失敗しても投稿は成功のまま
+  await notifySafely('event_created', () => notifyEventCreated(supabase, data, writerId(actor)));
 
   return sendJson(res, 201, data);
 };
